@@ -7,6 +7,15 @@ Unified harness for running and comparing RL baselines (`EXPO`, `ibrl`, `dsrl`, 
 - Shared SLURM rendering/launch flow.
 - Upstream pinning + patch-based local delta tracking.
 
+## Operating Policy (Project-Specific)
+
+This repository is a single-user research harness for `ankile`, not a general-purpose framework.
+
+- Prefer straightforward workflows over elaborate abstraction.
+- Prefer fail-fast behavior over permissive fallbacks.
+- If setup/runtime state is wrong, commands should error loudly with actionable messages.
+- Optimize for getting reproducible runs working quickly on target clusters.
+
 ## Repository Model
 
 This repo is the source of truth for orchestration and local modifications.
@@ -34,7 +43,7 @@ cd rl-baselines
 ./benchctl bootstrap
 ```
 
-4. (Optional) Create baseline environments from the env specs:
+4. Create baseline environments from the env specs (required for actual runs):
 
 ```bash
 ./benchctl bootstrap --create-envs
