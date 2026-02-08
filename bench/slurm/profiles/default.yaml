@@ -1,0 +1,17 @@
+version: 1
+name: default
+
+partition: null
+account: null
+constraint: null
+
+resources:
+  time: 4-00:00:00
+  gpus: 1
+  cpus: 12
+  mem: 64G
+
+logs_root: bench/logs/slurm
+
+launcher:
+  use_micromamba_run: true

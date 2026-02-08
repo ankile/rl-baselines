@@ -1,0 +1,8 @@
+version: 1
+name: expo
+manager: micromamba
+
+create:
+  commands:
+    - micromamba env create -f ../EXPO/environment.yml -y
+    - micromamba run -n expo pip install -r ../EXPO/requirements.txt

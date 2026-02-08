@@ -1,0 +1,6 @@
+version: 1
+generated: '2026-02-08T01:37:41.633217+00:00'
+platform: linux-64
+baseline: ibrl
+spec_sha256: b6f0d8b0b43ada13ae793469de3de3e09c7d8951da91daacab8fd6e3707253f3
+spec_file: bench/envs/ibrl.environment.yml

@@ -1,0 +1,29 @@
+#!/bin/bash
+#SBATCH --job-name={{job_name}}
+#SBATCH --time={{time}}
+#SBATCH --cpus-per-task={{cpus}}
+#SBATCH --mem={{mem}}
+#SBATCH --gres=gpu:{{gpus}}
+#SBATCH --output={{output_path}}
+#SBATCH --array=0-{{array_max}}
+{% if partition %}#SBATCH --partition={{partition}}
+{% endif %}{% if account %}#SBATCH --account={{account}}
+{% endif %}{% if constraint %}#SBATCH --constraint={{constraint}}
+{% endif %}
+set -euo pipefail
+
+mkdir -p "$(dirname "{{output_path}}")"
+
+declare -a COMMANDS=(
+{{commands_block}}
+)
+
+CMD="${COMMANDS[$SLURM_ARRAY_TASK_ID]}"
+echo "[$(date -Iseconds)] Running: $CMD"
+
+if command -v micromamba >/dev/null 2>&1; then
+  micromamba run -n {{env_name}} bash -lc "cd '{{repo_cwd}}' && {{env_exports}} $CMD"
+else
+  echo "micromamba not found" >&2
+  exit 1
+fi

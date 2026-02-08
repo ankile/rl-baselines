@@ -1,0 +1,9 @@
+version: 1
+name: ibrl
+manager: micromamba
+
+create:
+  commands:
+    - micromamba create -n ibrl python=3.9 pip -y
+    - micromamba run -n ibrl pip install -r ../ibrl/requirements.txt
+    - micromamba run -n ibrl bash -lc "cd ../ibrl/common_utils && make"

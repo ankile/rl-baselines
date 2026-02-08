@@ -1,0 +1,209 @@
+From 30d2739a5ebb32b1f70e51110a0a920b981429d8 Mon Sep 17 00:00:00 2001
+From: ankile <lars.ankile@gmail.com>
+Date: Thu, 5 Feb 2026 12:26:22 -0800
+Subject: [PATCH] Add environment activation to sbatch script
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+---
+ launch_dsrl_square.sbatch | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+ create mode 100755 launch_dsrl_square.sbatch
+
+diff --git a/launch_dsrl_square.sbatch b/launch_dsrl_square.sbatch
+new file mode 100755
+index 0000000..2176389
+--- /dev/null
++++ b/launch_dsrl_square.sbatch
+@@ -0,0 +1,20 @@
++#!/bin/bash
++#SBATCH --job-name=dsrl_square
++#SBATCH --gres=gpu:1
++#SBATCH --time=96:00:00
++#SBATCH --mem=32G
++#SBATCH --cpus-per-task=8
++#SBATCH --output=logs/slurm/%j_%x.out
++#SBATCH --array=1
++
++# Activate environment
++eval "$(micromamba shell hook --shell bash)"
++micromamba activate dsrl
++
++cd /iris/u/ankile/self-improving-robots-workspace/dsrl
++
++# Run training with EXPO-compatible config
++python train_dsrl.py \
++    --config-path=cfg/robomimic \
++    --config-name=dsrl_square_comparison.yaml \
++    seed=${SLURM_ARRAY_TASK_ID}
+-- 
+2.43.0
+diff --git a/launch_dsrl_square.sbatch b/launch_dsrl_square.sbatch
+index 2176389..7bd424f 100755
+--- a/launch_dsrl_square.sbatch
++++ b/launch_dsrl_square.sbatch
+@@ -1,7 +1,7 @@
+ #!/bin/bash
+ #SBATCH --job-name=dsrl_square
+ #SBATCH --gres=gpu:1
+-#SBATCH --time=96:00:00
++#SBATCH --time=1-00:00
+ #SBATCH --mem=32G
+ #SBATCH --cpus-per-task=8
+ #SBATCH --output=logs/slurm/%j_%x.out
+diff --git a/train_dsrl.py b/train_dsrl.py
+index f5c3ad3..66d8de4 100644
+--- a/train_dsrl.py
++++ b/train_dsrl.py
+@@ -8,8 +8,12 @@ import wandb
+ import numpy as np
+ import hydra
+ from omegaconf import OmegaConf
+-import gym, d4rl
+-import d4rl.gym_mujoco
++import gym
++try:
++    import d4rl
++    import d4rl.gym_mujoco
++except Exception:
++    pass  # d4rl.gym_mujoco not needed for robomimic tasks
+ import sys
+ sys.path.append('./dppo')
+  
+@@ -174,8 +178,9 @@ def main(cfg: OmegaConf):
+ 
+ 	callbacks = [checkpoint_callback, logging_callback]
+ 	# Train the agent
++	total_timesteps = cfg.get('total_timesteps', 20000000)  # Default to 20M for backward compatibility
+ 	model.learn(
+-		total_timesteps=20000000,
++		total_timesteps=total_timesteps,
+ 		callback = callbacks
+ 	)
+ 
+diff --git a/cfg/robomimic/dsrl_square_comparison.yaml b/cfg/robomimic/dsrl_square_comparison.yaml
+new file mode 100644
+index 0000000..d24d49e
+--- /dev/null
++++ b/cfg/robomimic/dsrl_square_comparison.yaml
+@@ -0,0 +1,104 @@
++defaults:
++  - _self_
++hydra:
++  run:
++    dir: ${logdir}
++
++# EXPO-compatible run naming: dsrl_square_s{seed}
++name: dsrl_square_s${seed}
++logdir: ${log_dir}/robomimic-dsrl/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
++base_policy_path: ./dppo/log/robomimic-pretrain/square/square_pre_diffusion_mlp_ta4_td100_ddim-100steps/2025-04-11_19-13-26_44/checkpoint/state_3000.pt
++offline_data_path: ./dppo/log/robomimic/square_traj_data/train_offline.npz
++normalization_path: ./dppo/log/robomimic/${env_name}/normalization.npz
++dppo_path: ./dppo
++
++algorithm: dsrl_na
++
++seed: 1
++device: cuda:0
++use_wandb: True
++env_name: square
++log_dir: ./logs
++obs_dim: 23
++action_dim: 7
++cond_steps: 1
++act_steps: 4
++load_offline_data: False
++deterministic_eval: False
++
++# EXPO-compatible training parameters
++total_timesteps: 10000000  # 10M instead of 20M
++eval_interval: 100000  # Changed from 4000
++num_evals: 100  # Changed from 200 (100 eval episodes)
++save_model_interval: 1000000
++save_replay_buffer: False
++
++env:
++  n_envs:  4
++  n_eval_envs: 25
++  name: ${env_name}
++  max_episode_steps: 400
++  reset_at_iteration: False
++  save_video: False
++  best_reward_threshold_for_success: 1
++  reward_offset: 1
++  wrappers:
++    robomimic_lowdim:
++      normalization_path: ${normalization_path}
++      low_dim_keys: ['robot0_eef_pos',
++                    'robot0_eef_quat',
++                    'robot0_gripper_qpos',
++                    'object']
++    multi_step:
++      n_obs_steps: ${cond_steps}
++      n_action_steps: ${act_steps}
++      max_episode_steps: ${env.max_episode_steps}
++      reset_within_step: True
++
++wandb:
++  project: square-online-rl-saturation  # Changed from 'dsrl' for EXPO comparison
++  run: ${name}  # Use standardized run name
++  group: robomimic-square
++
++train:
++  tau: 0.005 # Target update rate
++  actor_lr: 3e-4
++  batch_size: 256
++  train_freq: 1 # Update model after this many environment steps
++  utd: 20 # Number of gradient steps to take per update
++  noise_critic_grad_steps: 10 # Number of gradient steps to take per update when fitting noise critic
++  use_layer_norm: True
++  layer_size: 2048 # Layer size for actor and critic
++  num_layers: 3 # Number of layers for actor and critic
++  discount: 0.999
++  ent_coef: -1
++  target_ent: 0.0
++  init_rollout_steps: 5001 # ~5000 start_training equivalent (EXPO-compatible)
++  action_magnitude: 1.5 # Maximum action magnitude in noise action space
++  n_critics: 2 # Number of critic Q networks
++  critic_backup_combine_type: min
++
++model:
++  _target_: model.diffusion.diffusion_eval.DiffusionEval
++  ft_denoising_steps: 0
++  predict_epsilon: True
++  denoised_clip_value: 1.0
++  randn_clip_value: 3
++  network_path: ${base_policy_path}
++  network:
++    _target_: model.diffusion.mlp_diffusion.DiffusionMLP
++    time_dim: 32
++    mlp_dims: [1024, 1024, 1024]
++    cond_mlp_dims: [512, 64]
++    residual_style: True
++    cond_dim: ${eval:'${obs_dim} * ${cond_steps}'}
++    horizon_steps: ${act_steps}
++    action_dim: ${action_dim}
++  horizon_steps: ${act_steps}
++  obs_dim: ${obs_dim}
++  action_dim: ${action_dim}
++  denoising_steps: 100
++  device: ${device}
++  use_ddim: True
++  ddim_steps: 8
++  controllable_noise: True
+diff --git a/launch_dsrl_square_seeds.sh b/launch_dsrl_square_seeds.sh
+new file mode 100755
+index 0000000..263e395
+--- /dev/null
++++ b/launch_dsrl_square_seeds.sh
+@@ -0,0 +1,11 @@
++#!/bin/bash
++# Launch DSRL square training with multiple seeds
++# Usage: ./launch_dsrl_square_seeds.sh [seeds...]
++# Example: ./launch_dsrl_square_seeds.sh 42 43 44
++
++SEEDS=${@:-42 43 44}
++
++for SEED in $SEEDS; do
++    echo "Launching DSRL square with seed $SEED"
++    sbatch launch_dsrl_square.sbatch $SEED
++done

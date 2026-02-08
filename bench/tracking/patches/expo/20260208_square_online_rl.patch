@@ -1,0 +1,276 @@
+From 9afbfd0311c607befd4c31a9417487b3f9deb7ab Mon Sep 17 00:00:00 2001
+From: ankile <lars.ankile@gmail.com>
+Date: Wed, 4 Feb 2026 17:26:12 -0800
+Subject: [PATCH 1/2] Add online RL configuration for square task with success
+ metrics
+
+- Add wandb_entity flag and update max_steps default to 10M
+- Track success in info dict for RobosuiteGymWrapper and MimicgenGymWrapper
+- Add success_rate and success_length_mean metrics to evaluate_robo()
+- Track success flag during trajectory sampling in TrajSamplerProc
+- Add SLURM batch script for IRIS cluster
+- Add documentation for online RL preferences and metric definitions
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+---
+ docs/online_rl_preferences.md | 86 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 86 insertions(+)
+ create mode 100644 docs/online_rl_preferences.md
+
+diff --git a/docs/online_rl_preferences.md b/docs/online_rl_preferences.md
+new file mode 100644
+index 0000000..b0bb440
+--- /dev/null
++++ b/docs/online_rl_preferences.md
+@@ -0,0 +1,86 @@
++# Online RL Preferences for Square Task
++
++## Wandb Configuration
++
++- **Project name**: `square-online-rl-saturation`
++- **Entity**: Set via `--wandb_entity` flag (optional)
++
++## Logged Metrics
++
++### Evaluation Metrics
++- `eval/success_rate`: Fraction of episodes that succeeded (task completed)
++- `eval/success_length_mean`: Average episode length for successful episodes
++- `eval/return`: Mean episode return across all evaluation episodes
++- `eval/length`: Mean episode length across all evaluation episodes
++
++### Training Metrics
++- `training/return`: Episode return during training
++- `training/length`: Episode length during training
++
++## Training Configuration
++
++- **Max steps**: 10M (`--max_steps=10000000`)
++- **UTD ratio**: 20 (`--utd_ratio=20`)
++- **Start training**: 5000 steps (`--start_training=5000`)
++- **Evaluation episodes**: 100 per eval round (`--eval_episodes=100`)
++- **Evaluation interval**: Every 10K steps (`--eval_interval=10000`)
++
++## SLURM Configuration (IRIS Cluster)
++
++- **Partition**: iris
++- **Time limit**: 4 days
++- **CPUs**: 12
++- **Memory**: 128G
++- **GPU**: 1
++
++See `scripts/square_online_rl.sbatch` for the full job submission script.
++
++## Success Metric Definitions
++
++These definitions ensure consistency for cross-repo comparison:
++
++- **Success**: A boolean flag returned by the environment's `is_success()["task"]` method. An episode is considered successful if this flag becomes True at any point during the episode.
++
++- **Success Rate**: The fraction of evaluation episodes where success was achieved:
++  ```
++  success_rate = (number of successful episodes) / (total evaluation episodes)
++  ```
++
++- **Success Length Mean**: The average number of timesteps to complete the task, computed only over successful episodes:
++  ```
++  success_length_mean = mean(episode_length for episode in successful_episodes)
++  ```
++  Returns 0.0 if no episodes were successful.
++
++## Usage
++
++### Single run:
++```bash
++python train_robo.py \
++    --env_name=square \
++    --seed=42 \
++    --dataset_dir=ph \
++    --utd_ratio=20 \
++    --start_training=5000 \
++    --max_steps=10000000 \
++    --eval_episodes=100 \
++    --eval_interval=10000 \
++    --config=configs/expo_config.py \
++    --config.backup_entropy=False \
++    --config.hidden_dims="(256, 256, 256)" \
++    --config.num_min_qs=2 \
++    --config.N=8 \
++    --config.n_edit_samples=8 \
++    --config.edit_action_scale=0.05 \
++    --project_name=square-online-rl-saturation \
++    --wandb_entity=your-entity-name
++```
++
++### SLURM submission:
++```bash
++# Single job
++sbatch scripts/square_online_rl.sbatch
++
++# Array job with multiple seeds
++sbatch --array=0-4 scripts/square_online_rl.sbatch
++```
+-- 
+2.43.0
+
+
+From 91e6425ee27bd9b24a23e8084046a4c469f3fc6f Mon Sep 17 00:00:00 2001
+From: ankile <lars.ankile@gmail.com>
+Date: Wed, 4 Feb 2026 20:04:47 -0800
+Subject: [PATCH 2/2] Update to offline-to-online RL config with method name in
+ run name
+
+- Add automatic run naming: {method}_{env_name}_s{seed} (e.g., expo_square_s42)
+- Switch to offline-to-online settings per EXPO paper:
+  - pretrain_steps=200k, start_training=0, edit_action_scale=0.1
+- Update eval_interval to 100k steps
+- Update docs to reflect offline-to-online configuration
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+---
+ docs/online_rl_preferences.md | 20 +++++++++++++-------
+ 1 file changed, 13 insertions(+), 7 deletions(-)
+
+diff --git a/docs/online_rl_preferences.md b/docs/online_rl_preferences.md
+index b0bb440..103a237 100644
+--- a/docs/online_rl_preferences.md
++++ b/docs/online_rl_preferences.md
+@@ -1,9 +1,10 @@
+-# Online RL Preferences for Square Task
++# Offline-to-Online RL Preferences for Square Task
+ 
+ ## Wandb Configuration
+ 
+ - **Project name**: `square-online-rl-saturation`
+ - **Entity**: Set via `--wandb_entity` flag (optional)
++- **Run naming**: Runs are automatically named `{method}_{env_name}_s{seed}` (e.g., `expo_square_s42`). The method name is extracted from the config file path.
+ 
+ ## Logged Metrics
+ 
+@@ -17,13 +18,15 @@
+ - `training/return`: Episode return during training
+ - `training/length`: Episode length during training
+ 
+-## Training Configuration
++## Training Configuration (Offline-to-Online)
+ 
++- **Pretrain steps**: 200K (`--pretrain_steps=200000`)
++- **Start training**: 0 (online training starts immediately after pretraining)
+ - **Max steps**: 10M (`--max_steps=10000000`)
+ - **UTD ratio**: 20 (`--utd_ratio=20`)
+-- **Start training**: 5000 steps (`--start_training=5000`)
+ - **Evaluation episodes**: 100 per eval round (`--eval_episodes=100`)
+-- **Evaluation interval**: Every 10K steps (`--eval_interval=10000`)
++- **Evaluation interval**: Every 100K steps (`--eval_interval=100000`)
++- **Edit action scale (β)**: 0.1 (offline-to-online setting from paper)
+ 
+ ## SLURM Configuration (IRIS Cluster)
+ 
+@@ -61,17 +64,20 @@ python train_robo.py \
+     --seed=42 \
+     --dataset_dir=ph \
+     --utd_ratio=20 \
+-    --start_training=5000 \
++    --start_training=0 \
++    --pretrain_steps=200000 \
++    --pretrain_q=False \
++    --pretrain_edit=False \
+     --max_steps=10000000 \
+     --eval_episodes=100 \
+-    --eval_interval=10000 \
++    --eval_interval=100000 \
+     --config=configs/expo_config.py \
+     --config.backup_entropy=False \
+     --config.hidden_dims="(256, 256, 256)" \
+     --config.num_min_qs=2 \
+     --config.N=8 \
+     --config.n_edit_samples=8 \
+-    --config.edit_action_scale=0.05 \
++    --config.edit_action_scale=0.1 \
+     --project_name=square-online-rl-saturation \
+     --wandb_entity=your-entity-name
+ ```
+-- 
+2.43.0
+diff --git a/docs/online_rl_preferences.md b/docs/online_rl_preferences.md
+index 103a237..1fdb524 100644
+--- a/docs/online_rl_preferences.md
++++ b/docs/online_rl_preferences.md
+@@ -11,29 +11,22 @@
+ ### Evaluation Metrics
+ - `eval/success_rate`: Fraction of episodes that succeeded (task completed)
+ - `eval/success_length_mean`: Average episode length for successful episodes
+-- `eval/return`: Mean episode return across all evaluation episodes
+ - `eval/length`: Mean episode length across all evaluation episodes
+ 
+ ### Training Metrics
+-- `training/return`: Episode return during training
+-- `training/length`: Episode length during training
++- Log whatever metrics are created/logged by the method, but nest it under the `train/` key
+ 
+ ## Training Configuration (Offline-to-Online)
+ 
+-- **Pretrain steps**: 200K (`--pretrain_steps=200000`)
+-- **Start training**: 0 (online training starts immediately after pretraining)
+ - **Max steps**: 10M (`--max_steps=10000000`)
+-- **UTD ratio**: 20 (`--utd_ratio=20`)
+ - **Evaluation episodes**: 100 per eval round (`--eval_episodes=100`)
+ - **Evaluation interval**: Every 100K steps (`--eval_interval=100000`)
+-- **Edit action scale (β)**: 0.1 (offline-to-online setting from paper)
+ 
+ ## SLURM Configuration (IRIS Cluster)
+ 
+-- **Partition**: iris
+ - **Time limit**: 4 days
+ - **CPUs**: 12
+-- **Memory**: 128G
++- **Memory**: 64G
+ - **GPU**: 1
+ 
+ See `scripts/square_online_rl.sbatch` for the full job submission script.
+@@ -42,8 +35,6 @@ See `scripts/square_online_rl.sbatch` for the full job submission script.
+ 
+ These definitions ensure consistency for cross-repo comparison:
+ 
+-- **Success**: A boolean flag returned by the environment's `is_success()["task"]` method. An episode is considered successful if this flag becomes True at any point during the episode.
+-
+ - **Success Rate**: The fraction of evaluation episodes where success was achieved:
+   ```
+   success_rate = (number of successful episodes) / (total evaluation episodes)
+@@ -87,6 +78,4 @@ python train_robo.py \
+ # Single job
+ sbatch scripts/square_online_rl.sbatch
+ 
+-# Array job with multiple seeds
+-sbatch --array=0-4 scripts/square_online_rl.sbatch
+ ```
+diff --git a/expo/distributions/tanh_normal.py b/expo/distributions/tanh_normal.py
+index 67df5ea..8d33798 100644
+--- a/expo/distributions/tanh_normal.py
++++ b/expo/distributions/tanh_normal.py
+@@ -1,11 +1,10 @@
+ import functools
+ from typing import Optional, Type
+ 
+-import tensorflow_probability
++from tensorflow_probability.substrates import jax as tfp
+ 
+ from expo.distributions.tanh_transformed import TanhTransformedDistribution
+ 
+-tfp = tensorflow_probability.substrates.jax
+ tfd = tfp.distributions
+ 
+ import flax.linen as nn
+diff --git a/expo/distributions/tanh_transformed.py b/expo/distributions/tanh_transformed.py
+index 5491500..70bb12d 100644
+--- a/expo/distributions/tanh_transformed.py
++++ b/expo/distributions/tanh_transformed.py
+@@ -1,8 +1,6 @@
+ from typing import Any, Optional
+ 
+-import tensorflow_probability
+-
+-tfp = tensorflow_probability.substrates.jax
++from tensorflow_probability.substrates import jax as tfp
+ tfd = tfp.distributions
+ tfb = tfp.bijectors
+ 

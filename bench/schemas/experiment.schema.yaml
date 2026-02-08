@@ -1,0 +1,11 @@
+version: 1
+required:
+  - version
+  - name
+  - task_id
+  - wandb
+  - seeds
+  - train_budget
+  - eval
+  - cluster
+  - baselines

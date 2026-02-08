@@ -1,0 +1,43 @@
+version: 1
+baseline_id: dsrl
+repo_path: ../dsrl
+env_name: dsrl
+
+task_mapping:
+  nut_assembly_square:
+    env_name: square
+    config_path: cfg/robomimic
+    config_name: dsrl_square_comparison.yaml
+
+run_name_template: dsrl_square_s{seed}
+
+launch:
+  command_template: >-
+    python train_dsrl.py
+    --config-path={config_path}
+    --config-name={config_name}
+    seed={seed}
+    total_timesteps={max_steps}
+    eval_interval={eval_interval}
+    num_evals={eval_episodes}
+    wandb.project={wandb_project}
+  env:
+    MUJOCO_GL: egl
+
+wandb_mapping:
+  project_arg: wandb.project=
+  entity_arg: null
+  group_arg: wandb.group=
+  run_name_arg: wandb.run=
+
+metric_mapping:
+  eval_success_rate: eval/success_rate
+  eval_success_length_mean: eval/success_length_mean
+  eval_return: eval/return
+  eval_length: eval/length
+  train_prefix: train/
+
+preflight_checks:
+  required_files:
+    - train_dsrl.py
+    - cfg/robomimic/dsrl_square_comparison.yaml

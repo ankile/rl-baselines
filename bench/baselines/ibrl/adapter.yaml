@@ -1,0 +1,42 @@
+version: 1
+baseline_id: ibrl
+repo_path: ../ibrl
+env_name: ibrl
+
+task_mapping:
+  nut_assembly_square:
+    task_name: NutAssemblySquare
+    config_path: release/cfgs/robomimic_rl/square_state_rlpd_online.yaml
+
+run_name_template: rlpd_square_s{seed}
+
+launch:
+  command_template: >-
+    python train_rl.py
+    --config_path {config_path}
+    --seed {seed}
+    --wandb_project {wandb_project}
+    --wandb_entity {wandb_entity}
+    --num_train_step {max_steps}
+    --num_eval_episode {eval_episodes}
+    --log_per_step {eval_interval}
+  env:
+    MUJOCO_GL: egl
+
+wandb_mapping:
+  project_arg: --wandb_project
+  entity_arg: --wandb_entity
+  group_arg: null
+  run_name_arg: null
+
+metric_mapping:
+  eval_success_rate: eval/success_rate
+  eval_success_length_mean: eval/success_length_mean
+  eval_return: eval/return
+  eval_length: eval/length
+  train_prefix: train/
+
+preflight_checks:
+  required_files:
+    - train_rl.py
+    - release/cfgs/robomimic_rl/square_state_rlpd_online.yaml

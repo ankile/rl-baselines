@@ -1,0 +1,54 @@
+version: 1
+baseline_id: qam
+repo_path: ../qam
+env_name: qam
+
+task_mapping:
+  nut_assembly_square:
+    env_name: square-mh-low_dim
+
+run_name_template: qam_square_s{seed}
+
+launch:
+  command_template: >-
+    python main.py
+    --run_group=qam-square
+    --wandb_project={wandb_project}
+    --agent=agents/qam.py
+    --tags=QAM
+    --seed={seed}
+    --env_name={env_name}
+    --horizon_length=5
+    --agent.action_chunking=True
+    --offline_steps=1000000
+    --online_steps={max_steps}
+    --utd_ratio=1
+    --eval_episodes={eval_episodes}
+    --eval_interval={eval_interval}
+    --log_interval=5000
+    --save_interval=100000
+    --agent.num_qs=10
+    --agent.discount=0.99
+    --agent.batch_size=256
+    --agent.rho=0.5
+    --agent.inv_temp=1.0
+  env:
+    MUJOCO_GL: egl
+
+wandb_mapping:
+  project_arg: --wandb_project
+  entity_arg: null
+  group_arg: --run_group
+  run_name_arg: null
+
+metric_mapping:
+  eval_success_rate: eval/success_rate
+  eval_success_length_mean: eval/success_length_mean
+  eval_return: eval/return
+  eval_length: eval/length
+  train_prefix: train/
+
+preflight_checks:
+  required_files:
+    - main.py
+    - agents/qam.py

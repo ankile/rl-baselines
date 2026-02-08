@@ -1,0 +1,130 @@
+From 88eeaf667c1f1a2793edc0dcd68792f9612008bc Mon Sep 17 00:00:00 2001
+From: ankile <lars.ankile@gmail.com>
+Date: Wed, 4 Feb 2026 21:18:15 -0800
+Subject: [PATCH 1/2] Add robomimic/robosuite Square task support
+
+- Add envs/robomimic_utils.py with environment creation and dataset loading
+- Update env_utils.py to detect and create robomimic environments
+- Add reward adjustment flag to shift robomimic rewards from [0,1] to [-1,0]
+- Add success_rate and success_length_mean metrics to evaluation.py
+- Add scripts/square_qam.sbatch with QAM paper hyperparameters
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+---
+ scripts/square_qam.sbatch | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+ create mode 100644 scripts/square_qam.sbatch
+
+diff --git a/scripts/square_qam.sbatch b/scripts/square_qam.sbatch
+new file mode 100644
+index 0000000..69cdf2f
+--- /dev/null
++++ b/scripts/square_qam.sbatch
+@@ -0,0 +1,35 @@
++#!/bin/bash
++#SBATCH --partition=iris
++#SBATCH --time=4-00:00:00
++#SBATCH --cpus-per-task=12
++#SBATCH --mem=128G
++#SBATCH --gres=gpu:1
++
++source ~/.bashrc
++micromamba activate qam
++cd /iris/u/ankile/self-improving-robots-workspace/qam
++
++MUJOCO_GL=egl python main.py \
++    --run_group=qam-square \
++    --agent=agents/qam.py \
++    --tags=QAM \
++    --seed=${SLURM_ARRAY_TASK_ID:-10001} \
++    --env_name=square-mh-low_dim \
++    --horizon_length=5 \
++    --agent.action_chunking=True \
++    --offline_steps=1000000 \
++    --online_steps=10000000 \
++    --utd_ratio=1 \
++    --eval_episodes=100 \
++    --eval_interval=100000 \
++    --log_interval=5000 \
++    --save_interval=100000 \
++    --agent.num_qs=10 \
++    --agent.discount=0.99 \
++    --agent.actor_hidden_dims='"(512, 512, 512, 512)"' \
++    --agent.value_hidden_dims='"(512, 512, 512, 512)"' \
++    --agent.batch_size=256 \
++    --agent.rho=0.5 \
++    --agent.inv_temp=1.0 \
++    --agent.fql_alpha=0.0 \
++    --agent.edit_scale=0.0
+-- 
+2.43.0
+
+
+From fe3edf756ea5116bc717815bb422add8582d5900 Mon Sep 17 00:00:00 2001
+From: ankile <lars.ankile@gmail.com>
+Date: Thu, 5 Feb 2026 12:21:22 -0800
+Subject: [PATCH 2/2] Add wandb_project flag for configurable project name
+
+- Add --wandb_project flag to main.py (defaults to 'qam-reproduce')
+- Update setup_wandb() to use FLAGS.wandb_project instead of hardcoded value
+- Update square_qam.sbatch to use square-online-rl-saturation project
+- Simplify sbatch script settings
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+---
+ scripts/square_qam.sbatch | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/scripts/square_qam.sbatch b/scripts/square_qam.sbatch
+index 69cdf2f..766a42e 100644
+--- a/scripts/square_qam.sbatch
++++ b/scripts/square_qam.sbatch
+@@ -1,16 +1,20 @@
+ #!/bin/bash
+-#SBATCH --partition=iris
+-#SBATCH --time=4-00:00:00
++#SBATCH --time=1-00:00:00
+ #SBATCH --cpus-per-task=12
+ #SBATCH --mem=128G
+ #SBATCH --gres=gpu:1
++#SBATCH --output=logs/square_online_rl_%j.out
++#SBATCH --job-name=qam-square
+ 
+-source ~/.bashrc
++# Activate environment
++eval "$(micromamba shell hook --shell bash)"
+ micromamba activate qam
++
+ cd /iris/u/ankile/self-improving-robots-workspace/qam
+ 
+ MUJOCO_GL=egl python main.py \
+     --run_group=qam-square \
++    --wandb_project=square-online-rl-saturation \
+     --agent=agents/qam.py \
+     --tags=QAM \
+     --seed=${SLURM_ARRAY_TASK_ID:-10001} \
+@@ -26,10 +30,6 @@ MUJOCO_GL=egl python main.py \
+     --save_interval=100000 \
+     --agent.num_qs=10 \
+     --agent.discount=0.99 \
+-    --agent.actor_hidden_dims='"(512, 512, 512, 512)"' \
+-    --agent.value_hidden_dims='"(512, 512, 512, 512)"' \
+     --agent.batch_size=256 \
+     --agent.rho=0.5 \
+-    --agent.inv_temp=1.0 \
+-    --agent.fql_alpha=0.0 \
+-    --agent.edit_scale=0.0
++    --agent.inv_temp=1.0
+-- 
+2.43.0
+diff --git a/scripts/square_qam.sbatch b/scripts/square_qam.sbatch
+index 766a42e..9104e63 100644
+--- a/scripts/square_qam.sbatch
++++ b/scripts/square_qam.sbatch
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-#SBATCH --time=1-00:00:00
++#SBATCH --time=1-00:00
+ #SBATCH --cpus-per-task=12
+ #SBATCH --mem=128G
+ #SBATCH --gres=gpu:1

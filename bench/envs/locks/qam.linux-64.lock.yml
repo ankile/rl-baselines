@@ -1,0 +1,6 @@
+version: 1
+generated: '2026-02-08T01:37:41.633217+00:00'
+platform: linux-64
+baseline: qam
+spec_sha256: f734a285e15157699472b3ed5934c52e80e7dabd9e12d8143d0e6e49219af535
+spec_file: bench/envs/qam.environment.yml

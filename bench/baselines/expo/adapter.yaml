@@ -1,0 +1,56 @@
+version: 1
+baseline_id: expo
+repo_path: ../EXPO
+env_name: expo
+
+task_mapping:
+  nut_assembly_square:
+    env_name: square
+    dataset_dir: ph
+
+run_name_template: expo_square_s{seed}
+
+launch:
+  command_template: >-
+    python train_robo.py
+    --env_name={env_name}
+    --seed={seed}
+    --dataset_dir={dataset_dir}
+    --utd_ratio=20
+    --start_training=0
+    --pretrain_steps=200000
+    --pretrain_q=False
+    --pretrain_edit=False
+    --max_steps={max_steps}
+    --eval_episodes={eval_episodes}
+    --eval_interval={eval_interval}
+    --config=configs/expo_config.py
+    --config.backup_entropy=False
+    --config.hidden_dims="(256, 256, 256)"
+    --config.num_min_qs=2
+    --config.N=8
+    --config.n_edit_samples=8
+    --config.edit_action_scale=0.1
+    --project_name={wandb_project}
+    --wandb_entity={wandb_entity}
+  env:
+    XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+    D4RL_SUPPRESS_IMPORT_ERROR: "1"
+
+wandb_mapping:
+  project_arg: --project_name
+  entity_arg: --wandb_entity
+  group_arg: null
+  run_name_arg: null
+
+metric_mapping:
+  eval_success_rate: eval/success_rate
+  eval_success_length_mean: eval/success_length_mean
+  eval_return: eval/return
+  eval_length: eval/length
+  train_prefix: train/
+
+preflight_checks:
+  required_files:
+    - train_robo.py
+    - configs/expo_config.py

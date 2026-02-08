@@ -1,0 +1,10 @@
+version: 1
+required:
+  - version
+  - baseline_id
+  - repo_path
+  - env_name
+  - task_mapping
+  - launch
+  - metric_mapping
+  - preflight_checks

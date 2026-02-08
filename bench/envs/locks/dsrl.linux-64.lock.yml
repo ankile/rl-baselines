@@ -1,0 +1,6 @@
+version: 1
+generated: '2026-02-08T01:37:41.633217+00:00'
+platform: linux-64
+baseline: dsrl
+spec_sha256: 47511e11e13bd895f8634ab2a6dd1b0d0f86b21a8eca2fb249e18fe6072eabb2
+spec_file: bench/envs/dsrl.environment.yml

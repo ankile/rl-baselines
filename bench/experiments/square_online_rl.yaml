@@ -1,0 +1,52 @@
+version: 1
+name: square-online-rl
+
+task_id: nut_assembly_square
+env_alias_by_baseline:
+  expo: square
+  ibrl: NutAssemblySquare
+  dsrl: square
+  qam: square-mh-low_dim
+
+dataset_variant: ph
+
+wandb:
+  project: square-online-rl-saturation
+  entity: ankile
+  tags_common:
+    - square
+    - online-rl
+
+seeds: [42, 43, 44]
+
+train_budget:
+  max_steps: 10000000
+  offline_steps: 200000
+  online_steps: 10000000
+
+eval:
+  episodes: 100
+  interval: 100000
+
+cluster:
+  profile: default
+
+resources:
+  time: 4-00:00:00
+  gpus: 1
+  cpus: 12
+  mem: 64G
+
+baselines:
+  - id: expo
+    enabled: true
+    tags: [EXPO]
+  - id: ibrl
+    enabled: true
+    tags: [RLPD]
+  - id: dsrl
+    enabled: true
+    tags: [DSRL]
+  - id: qam
+    enabled: true
+    tags: [QAM]
