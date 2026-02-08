@@ -1,6 +1,6 @@
 version: 1
 baseline_id: qam
-repo_path: ../qam
+repo_path: third_party/qam
 env_name: qam
 
 task_mapping:

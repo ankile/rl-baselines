@@ -8,6 +8,7 @@
 - `tracking/upstreams.yaml`: upstream remotes, pinned commits, tracked paths, patch stack.
 - `tracking/patches/<id>/`: patch artifacts applied on bootstrap.
 - `tools/benchctl.py`: orchestration CLI.
+- `../third_party/`: cloned upstream baseline repos (managed by `./benchctl bootstrap`).
 
 ## Core CLI
 

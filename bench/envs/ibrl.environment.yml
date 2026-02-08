@@ -5,5 +5,5 @@ manager: micromamba
 create:
   commands:
     - micromamba create -n ibrl python=3.9 pip -y
-    - micromamba run -n ibrl pip install -r ../ibrl/requirements.txt
-    - micromamba run -n ibrl bash -lc "cd ../ibrl/common_utils && make"
+    - micromamba run -n ibrl pip install -r third_party/ibrl/requirements.txt
+    - micromamba run -n ibrl bash -lc "cd third_party/ibrl/common_utils && make"

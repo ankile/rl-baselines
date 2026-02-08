@@ -2,7 +2,7 @@ version: 1
 
 baselines:
   expo:
-    repo_path: ../EXPO
+    repo_path: third_party/EXPO
     remote_url: git@github.com:pd-perry/EXPO.git
     upstream_ref: origin/main
     upstream_commit: bbd571306b413e05d5d4b01a6efa20352c2b891a
@@ -14,7 +14,7 @@ baselines:
       - bench/tracking/patches/expo/20260208_square_online_rl.patch
 
   ibrl:
-    repo_path: ../ibrl
+    repo_path: third_party/ibrl
     remote_url: git@github.com:hengyuan-hu/ibrl.git
     upstream_ref: origin/main
     upstream_commit: 3c457da3689cc90f881bcdf42a0a578f4a1f60aa
@@ -26,7 +26,7 @@ baselines:
       - bench/tracking/patches/ibrl/20260208_square_online_rl.patch
 
   dsrl:
-    repo_path: ../dsrl
+    repo_path: third_party/dsrl
     remote_url: git@github.com:ajwagen/dsrl.git
     upstream_ref: origin/main
     upstream_commit: 8d21b9cf55459f022c0e769bca1343edd9d30e5a
@@ -39,7 +39,7 @@ baselines:
       - bench/tracking/patches/dsrl/20260208_square_online_rl.patch
 
   qam:
-    repo_path: ../qam
+    repo_path: third_party/qam
     remote_url: git@github.com:ColinQiyangLi/qam.git
     upstream_ref: origin/main
     upstream_commit: f93efd22520a79f6819f458dffe9c075eacc786f

@@ -1,6 +1,6 @@
 version: 1
 baseline_id: expo
-repo_path: ../EXPO
+repo_path: third_party/EXPO
 env_name: expo
 
 task_mapping:

@@ -1,6 +1,6 @@
 version: 1
 baseline_id: ibrl
-repo_path: ../ibrl
+repo_path: third_party/ibrl
 env_name: ibrl
 
 task_mapping:

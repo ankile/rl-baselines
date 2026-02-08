@@ -10,7 +10,7 @@ Unified harness for running and comparing RL baselines (`EXPO`, `ibrl`, `dsrl`, 
 ## Repository Model
 
 This repo is the source of truth for orchestration and local modifications.
-Upstream baseline repos remain external/read-only dependencies.
+Upstream baseline repos are cloned into `third_party/` and treated as read-only upstream + local patch overlays.
 
 ## New Cluster Runbook (Exact Order)
 
@@ -27,7 +27,8 @@ cd rl-baselines
 ./benchctl doctor
 ```
 
-3. Bootstrap upstream baseline repos (clone/fetch/checkout/submodule/patch):
+3. Bootstrap upstream baseline repos (clone/fetch/checkout/submodule/patch).
+   Repos are placed under `third_party/`:
 
 ```bash
 ./benchctl bootstrap
@@ -117,7 +118,7 @@ gh auth login -h github.com
 ## Prerequisites
 
 - Required: `git`, `python`, `micromamba`, `sbatch` (for launch).
-- Optional but recommended: `gh` for GitHub automation.
+- Optional: `gh` for GitHub automation.
 - Note: `benchctl doctor` checks shell-level command resolution and `gh auth status`.
 
 ## Key Paths
@@ -127,3 +128,4 @@ gh auth login -h github.com
 - `bench/slurm/`: cluster profiles and template.
 - `bench/tracking/`: upstream pins and patch files.
 - `bench/tools/benchctl.py`: CLI entrypoint.
+- `third_party/`: cloned upstream baseline repos managed by `benchctl bootstrap`.

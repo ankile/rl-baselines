@@ -1,6 +1,6 @@
 version: 1
 baseline_id: dsrl
-repo_path: ../dsrl
+repo_path: third_party/dsrl
 env_name: dsrl
 
 task_mapping:

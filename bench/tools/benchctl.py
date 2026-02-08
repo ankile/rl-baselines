@@ -244,36 +244,50 @@ def detect_command(exe: str) -> tuple[bool, str]:
     if path:
         return True, f"path:{path}"
 
-    shell = os.environ.get("SHELL") or "/bin/bash"
-    if not Path(shell).exists():
-        shell = "/bin/bash"
+    candidate_shells: list[str] = []
+    env_shell = os.environ.get("SHELL")
+    if env_shell:
+        candidate_shells.append(env_shell)
+    candidate_shells.extend(["/bin/zsh", "/usr/bin/zsh", "/bin/bash", "/usr/bin/bash"])
 
-    probe = subprocess.run(
-        [shell, "-lic", f"command -v {shlex.quote(exe)}"],
-        text=True,
-        capture_output=True,
-    )
-    if probe.returncode == 0 and probe.stdout.strip():
-        first = probe.stdout.strip().splitlines()[0]
-        return True, f"shell:{first}"
+    seen: set[str] = set()
+    for shell in candidate_shells:
+        if shell in seen:
+            continue
+        seen.add(shell)
+        if not Path(shell).exists():
+            continue
+
+        probe = subprocess.run(
+            [shell, "-lic", f"command -v {shlex.quote(exe)}"],
+            text=True,
+            capture_output=True,
+        )
+        if probe.returncode == 0 and probe.stdout.strip():
+            first = probe.stdout.strip().splitlines()[0]
+            return True, f"shell:{first}"
 
     return False, "missing"
 
 
 def cmd_doctor(_: argparse.Namespace) -> int:
-    checks: list[tuple[str, bool, str]] = []
+    checks: list[tuple[str, bool, str, bool]] = []
+    required_cmds = ["git", "python", "micromamba", "sbatch"]
+    optional_cmds = ["gh"]
 
-    for exe in ["git", "python", "micromamba", "gh", "sbatch"]:
+    for exe in required_cmds:
         ok, msg = detect_command(exe)
-        checks.append((f"command:{exe}", ok, msg))
+        checks.append((f"command:{exe}", ok, msg, True))
+
+    for exe in optional_cmds:
+        ok, msg = detect_command(exe)
+        checks.append((f"command:{exe}", ok, msg, False))
 
     gh_ok = False
     gh_msg = "gh command missing"
-    gh_present = dict((name, ok) for name, ok, _ in checks).get("command:gh", False)
+    gh_present = dict((name, ok) for name, ok, _, _ in checks).get("command:gh", False)
     if gh_present:
         shell = os.environ.get("SHELL") or "/bin/bash"
-        if not Path(shell).exists():
-            shell = "/bin/bash"
         proc = subprocess.run([shell, "-lic", "gh auth status"], text=True, capture_output=True)
         gh_ok = proc.returncode == 0
         out = (proc.stdout + proc.stderr).strip()
@@ -281,13 +295,22 @@ def cmd_doctor(_: argparse.Namespace) -> int:
             gh_msg = "authenticated"
         else:
             gh_msg = out.splitlines()[-1] if out else "gh auth status failed"
-    checks.append(("gh_auth", gh_ok, gh_msg))
+    else:
+        gh_ok = True
+        gh_msg = "skipped (gh optional)"
 
-    for name, ok, msg in checks:
-        status = "OK" if ok else "FAIL"
+    checks.append(("gh_auth", gh_ok, gh_msg, False))
+
+    for name, ok, msg, required in checks:
+        if ok:
+            status = "OK"
+        elif required:
+            status = "FAIL"
+        else:
+            status = "WARN"
         print(f"[{status}] {name}: {msg}")
 
-    return 0 if all(ok for name, ok, _ in checks if not name.startswith("command:sbatch")) else 1
+    return 0 if all(ok for _, ok, _, required in checks if required) else 1
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
