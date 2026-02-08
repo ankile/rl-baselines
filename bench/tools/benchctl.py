@@ -239,28 +239,22 @@ def render_jobs(exp_path: Path, baseline_filter: set[str] | None = None) -> dict
     return generated
 
 
-def candidate_shells() -> list[str]:
-    shells: list[str] = []
+def select_zsh_shell() -> str:
+    candidates: list[str] = []
     env_shell = os.environ.get("SHELL")
-    if env_shell:
-        shells.append(env_shell)
-    shells.extend(["/bin/zsh", "/usr/bin/zsh", "/bin/bash", "/usr/bin/bash"])
+    if env_shell and "zsh" in Path(env_shell).name:
+        candidates.append(env_shell)
+    candidates.extend(["/bin/zsh", "/usr/bin/zsh"])
 
-    unique: list[str] = []
     seen: set[str] = set()
-    for shell in shells:
+    for shell in candidates:
         if shell in seen:
             continue
         seen.add(shell)
-        unique.append(shell)
-    return unique
-
-
-def select_shell() -> str:
-    for shell in candidate_shells():
         if Path(shell).exists():
             return shell
-    return "/bin/sh"
+
+    raise BenchError("zsh shell not found. Install zsh or set SHELL to a zsh path.")
 
 
 def detect_command(exe: str) -> tuple[bool, str]:
@@ -268,25 +262,26 @@ def detect_command(exe: str) -> tuple[bool, str]:
     if path:
         return True, f"path:{path}"
 
-    for shell in candidate_shells():
-        if not Path(shell).exists():
-            continue
+    try:
+        shell = select_zsh_shell()
+    except BenchError:
+        return False, "missing"
 
-        probe = subprocess.run(
-            [shell, "-lic", f"command -v {shlex.quote(exe)}"],
-            text=True,
-            capture_output=True,
-        )
-        if probe.returncode == 0 and probe.stdout.strip():
-            first = probe.stdout.strip().splitlines()[0]
-            return True, f"shell:{first}"
+    probe = subprocess.run(
+        [shell, "-lic", f"command -v {shlex.quote(exe)}"],
+        text=True,
+        capture_output=True,
+    )
+    if probe.returncode == 0 and probe.stdout.strip():
+        first = probe.stdout.strip().splitlines()[0]
+        return True, f"shell:{first}"
 
     return False, "missing"
 
 
 def cmd_doctor(_: argparse.Namespace) -> int:
     checks: list[tuple[str, bool, str, bool]] = []
-    required_cmds = ["git", "python", "micromamba", "sbatch"]
+    required_cmds = ["git", "python", "zsh", "micromamba", "sbatch"]
     optional_cmds = ["gh"]
 
     for exe in required_cmds:
@@ -301,9 +296,23 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     gh_msg = "gh command missing"
     gh_present = dict((name, ok) for name, ok, _, _ in checks).get("command:gh", False)
     if gh_present:
-        shell = select_shell()
-        shell_args = [shell, "-lic"] if Path(shell).name in {"bash", "zsh"} else [shell, "-lc"]
-        proc = subprocess.run([*shell_args, "gh auth status"], text=True, capture_output=True)
+        try:
+            shell = select_zsh_shell()
+        except BenchError as exc:
+            gh_ok = False
+            gh_msg = str(exc)
+            checks.append(("gh_auth", gh_ok, gh_msg, False))
+            for name, ok, msg, required in checks:
+                if ok:
+                    status = "OK"
+                elif required:
+                    status = "FAIL"
+                else:
+                    status = "WARN"
+                print(f"[{status}] {name}: {msg}")
+            return 0 if all(ok for _, ok, _, required in checks if required) else 1
+
+        proc = subprocess.run([shell, "-lic", "gh auth status"], text=True, capture_output=True)
         gh_ok = proc.returncode == 0
         out = (proc.stdout + proc.stderr).strip()
         if gh_ok:
@@ -452,13 +461,12 @@ def create_env_from_spec(baseline_id: str) -> None:
         print(f"WARN {baseline_id}: no env create commands")
         return
 
-    shell = select_shell()
-    shell_args = [shell, "-lic"] if Path(shell).name in {"bash", "zsh"} else [shell, "-lc"]
+    shell = select_zsh_shell()
 
     for command in commands:
         print(f"env[{baseline_id}] $ {command}")
         proc = subprocess.run(
-            [*shell_args, command],
+            [shell, "-lic", command],
             cwd=str(ROOT),
             text=True,
         )

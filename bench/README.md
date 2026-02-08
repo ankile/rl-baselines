@@ -25,3 +25,4 @@
 - Keep this harness pragmatic and explicit.
 - Avoid introducing optional flows unless they are actively needed in this project.
 - On ambiguous or broken setup states, prefer hard failure over silent recovery.
+- Runtime shell assumption: `zsh`.

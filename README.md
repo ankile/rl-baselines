@@ -126,9 +126,9 @@ gh auth login -h github.com
 
 ## Prerequisites
 
-- Required: `git`, `python`, `micromamba`, `sbatch` (for launch).
+- Required: `git`, `python`, `zsh`, `micromamba`, `sbatch` (for launch).
 - Optional: `gh` for GitHub automation.
-- Note: `benchctl doctor` checks shell-level command resolution and `gh auth status`.
+- Note: this harness assumes `zsh` and executes setup commands under `zsh -lic`.
 
 ## Key Paths
 

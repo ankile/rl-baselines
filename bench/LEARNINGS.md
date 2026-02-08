@@ -12,6 +12,7 @@ These notes encode project-specific expectations so future changes stay aligned 
 - Prefer one clear path over many optional paths.
 - Prefer explicit errors over implicit fallback behavior.
 - Keep commands and configs concrete, not over-generalized.
+- Assume `zsh` as the shell environment.
 
 ## Failure Philosophy
 

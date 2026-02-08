@@ -21,9 +21,9 @@ declare -a COMMANDS=(
 CMD="${COMMANDS[$SLURM_ARRAY_TASK_ID]}"
 echo "[$(date -Iseconds)] Running: $CMD"
 
-if command -v micromamba >/dev/null 2>&1; then
-  micromamba run -n {{env_name}} bash -lc "cd '{{repo_cwd}}' && {{env_exports}} $CMD"
+if command -v zsh >/dev/null 2>&1; then
+  zsh -lic "micromamba run -n {{env_name}} bash -lc \"cd '{{repo_cwd}}' && {{env_exports}} $CMD\""
 else
-  echo "micromamba not found" >&2
+  echo "zsh not found (required)" >&2
   exit 1
 fi
