@@ -239,22 +239,36 @@ def render_jobs(exp_path: Path, baseline_filter: set[str] | None = None) -> dict
     return generated
 
 
+def candidate_shells() -> list[str]:
+    shells: list[str] = []
+    env_shell = os.environ.get("SHELL")
+    if env_shell:
+        shells.append(env_shell)
+    shells.extend(["/bin/zsh", "/usr/bin/zsh", "/bin/bash", "/usr/bin/bash"])
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for shell in shells:
+        if shell in seen:
+            continue
+        seen.add(shell)
+        unique.append(shell)
+    return unique
+
+
+def select_shell() -> str:
+    for shell in candidate_shells():
+        if Path(shell).exists():
+            return shell
+    return "/bin/sh"
+
+
 def detect_command(exe: str) -> tuple[bool, str]:
     path = shutil.which(exe)
     if path:
         return True, f"path:{path}"
 
-    candidate_shells: list[str] = []
-    env_shell = os.environ.get("SHELL")
-    if env_shell:
-        candidate_shells.append(env_shell)
-    candidate_shells.extend(["/bin/zsh", "/usr/bin/zsh", "/bin/bash", "/usr/bin/bash"])
-
-    seen: set[str] = set()
-    for shell in candidate_shells:
-        if shell in seen:
-            continue
-        seen.add(shell)
+    for shell in candidate_shells():
         if not Path(shell).exists():
             continue
 
@@ -287,8 +301,9 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     gh_msg = "gh command missing"
     gh_present = dict((name, ok) for name, ok, _, _ in checks).get("command:gh", False)
     if gh_present:
-        shell = os.environ.get("SHELL") or "/bin/bash"
-        proc = subprocess.run([shell, "-lic", "gh auth status"], text=True, capture_output=True)
+        shell = select_shell()
+        shell_args = [shell, "-lic"] if Path(shell).name in {"bash", "zsh"} else [shell, "-lc"]
+        proc = subprocess.run([*shell_args, "gh auth status"], text=True, capture_output=True)
         gh_ok = proc.returncode == 0
         out = (proc.stdout + proc.stderr).strip()
         if gh_ok:
@@ -437,11 +452,20 @@ def create_env_from_spec(baseline_id: str) -> None:
         print(f"WARN {baseline_id}: no env create commands")
         return
 
+    shell = select_shell()
+    shell_args = [shell, "-lic"] if Path(shell).name in {"bash", "zsh"} else [shell, "-lc"]
+
     for command in commands:
         print(f"env[{baseline_id}] $ {command}")
-        proc = subprocess.run(command, cwd=str(ROOT), shell=True, text=True)
+        proc = subprocess.run(
+            [*shell_args, command],
+            cwd=str(ROOT),
+            text=True,
+        )
         if proc.returncode != 0:
-            raise BenchError(f"{baseline_id}: env command failed: {command}")
+            raise BenchError(
+                f"{baseline_id}: env command failed under shell '{shell}': {command}"
+            )
 
 
 def cmd_bootstrap(args: argparse.Namespace) -> int:
