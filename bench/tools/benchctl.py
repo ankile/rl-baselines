@@ -239,26 +239,55 @@ def render_jobs(exp_path: Path, baseline_filter: set[str] | None = None) -> dict
     return generated
 
 
+def detect_command(exe: str) -> tuple[bool, str]:
+    path = shutil.which(exe)
+    if path:
+        return True, f"path:{path}"
+
+    shell = os.environ.get("SHELL") or "/bin/bash"
+    if not Path(shell).exists():
+        shell = "/bin/bash"
+
+    probe = subprocess.run(
+        [shell, "-lic", f"command -v {shlex.quote(exe)}"],
+        text=True,
+        capture_output=True,
+    )
+    if probe.returncode == 0 and probe.stdout.strip():
+        first = probe.stdout.strip().splitlines()[0]
+        return True, f"shell:{first}"
+
+    return False, "missing"
+
+
 def cmd_doctor(_: argparse.Namespace) -> int:
     checks: list[tuple[str, bool, str]] = []
 
     for exe in ["git", "python", "micromamba", "gh", "sbatch"]:
-        ok = shutil.which(exe) is not None
-        checks.append((f"command:{exe}", ok, "found" if ok else "missing"))
+        ok, msg = detect_command(exe)
+        checks.append((f"command:{exe}", ok, msg))
 
-    gh_ok = True
-    gh_msg = "ok"
-    if shutil.which("gh"):
-        proc = subprocess.run(["gh", "auth", "status"], text=True, capture_output=True)
+    gh_ok = False
+    gh_msg = "gh command missing"
+    gh_present = dict((name, ok) for name, ok, _ in checks).get("command:gh", False)
+    if gh_present:
+        shell = os.environ.get("SHELL") or "/bin/bash"
+        if not Path(shell).exists():
+            shell = "/bin/bash"
+        proc = subprocess.run([shell, "-lic", "gh auth status"], text=True, capture_output=True)
         gh_ok = proc.returncode == 0
-        gh_msg = (proc.stdout + proc.stderr).strip().splitlines()[-1] if (proc.stdout or proc.stderr) else ""
+        out = (proc.stdout + proc.stderr).strip()
+        if gh_ok:
+            gh_msg = "authenticated"
+        else:
+            gh_msg = out.splitlines()[-1] if out else "gh auth status failed"
     checks.append(("gh_auth", gh_ok, gh_msg))
 
     for name, ok, msg in checks:
         status = "OK" if ok else "FAIL"
         print(f"[{status}] {name}: {msg}")
 
-    return 0 if all(ok for _, ok, _ in checks if not _.startswith("command:sbatch")) else 1
+    return 0 if all(ok for name, ok, _ in checks if not name.startswith("command:sbatch")) else 1
 
 
 def cmd_validate(args: argparse.Namespace) -> int:

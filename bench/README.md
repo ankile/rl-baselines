@@ -8,3 +8,12 @@
 - `tracking/upstreams.yaml`: upstream remotes, pinned commits, tracked paths, patch stack.
 - `tracking/patches/<id>/`: patch artifacts applied on bootstrap.
 - `tools/benchctl.py`: orchestration CLI.
+
+## Core CLI
+
+- `./benchctl doctor`
+- `./benchctl bootstrap`
+- `./benchctl validate --experiment bench/experiments/square_online_rl.yaml`
+- `./benchctl render --experiment bench/experiments/square_online_rl.yaml`
+- `./benchctl launch --experiment bench/experiments/square_online_rl.yaml --dry-run`
+- `./benchctl launch --experiment bench/experiments/square_online_rl.yaml`
