@@ -9,3 +9,4 @@ create:
     - micromamba env create -f third_party/EXPO/environment.yml -y
     - micromamba run -n expo pip install --no-deps "dmcgym @ git+https://github.com/ikostrikov/dmcgym"
     - micromamba run -n expo pip install -r third_party/EXPO/requirements.txt
+    - micromamba install -n expo -c conda-forge glew mesalib libgl-devel libegl-devel -y
