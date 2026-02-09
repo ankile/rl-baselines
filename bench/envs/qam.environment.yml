@@ -6,3 +6,4 @@ create:
   commands:
     - micromamba create -n qam python=3.10 pip -y
     - micromamba run -n qam pip install -r third_party/qam/requirements.txt
+    - micromamba run -n qam pip install 'jax[cuda12]'
