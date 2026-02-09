@@ -84,11 +84,15 @@ cd rl-baselines
    **qam** — Download the robomimic Square MH low-dim dataset expected by QAM at `~/.robomimic/square/mh/low_dim_v141.hdf5`:
 
    ```bash
-   micromamba run -n qam python -m robomimic.scripts.download_datasets \
-     --download_dir ~/.robomimic \
-     --tasks square \
-     --dataset_types mh \
-     --hdf5_types low_dim
+   if [ ! -f ~/.robomimic/square/mh/low_dim_v141.hdf5 ]; then
+     micromamba run -n qam python -m robomimic.scripts.download_datasets \
+       --download_dir ~/.robomimic \
+       --tasks square \
+       --dataset_types mh \
+       --hdf5_types low_dim
+   else
+     echo "QAM dataset already present at ~/.robomimic/square/mh/low_dim_v141.hdf5"
+   fi
    ```
 
 6. Validate harness config for the canonical Square benchmark:

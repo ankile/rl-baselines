@@ -6,7 +6,8 @@ create:
   commands:
     - >
       bash -lc 'set -euo pipefail; MUJOCO_DIR="$HOME/.mujoco/mujoco210"; if [ -d "$MUJOCO_DIR" ]; then echo "MuJoCo already present at $MUJOCO_DIR"; else echo "Installing MuJoCo 2.1.0 into $MUJOCO_DIR"; mkdir -p "$HOME/.mujoco"; TMP_TAR="$(mktemp /tmp/mujoco210.XXXXXX.tar.gz)"; trap "rm -f \$TMP_TAR" EXIT; curl -fL https://github.com/google-deepmind/mujoco/releases/download/2.1.0/mujoco210-linux-x86_64.tar.gz -o "$TMP_TAR"; tar -xzf "$TMP_TAR" -C "$HOME/.mujoco"; [ -d "$MUJOCO_DIR" ] || { echo "MuJoCo install failed: expected directory missing: $MUJOCO_DIR" >&2; exit 1; }; fi'
-    - micromamba env create -f third_party/EXPO/environment.yml -y
+    - >
+      bash -lc 'if micromamba run -n expo python -V >/dev/null 2>&1; then echo "expo env already exists; skipping create"; else micromamba env create -f third_party/EXPO/environment.yml -y --override-channels -c defaults -c nvidia -c pytorch -c pytorch3d -c conda-forge --channel-priority flexible; fi'
     - micromamba run -n expo pip install --no-deps "dmcgym @ git+https://github.com/ikostrikov/dmcgym"
     - micromamba run -n expo pip install -r third_party/EXPO/requirements.txt
     - micromamba install -n expo -c conda-forge glew mesalib libgl-devel libegl-devel patchelf -y

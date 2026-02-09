@@ -4,7 +4,9 @@ manager: micromamba
 
 create:
   commands:
-    - micromamba create -n ibrl python=3.9 pip -y
-    - micromamba run -n ibrl pip install 'torch==2.1.0' 'torchvision==0.16.0' --index-url https://download.pytorch.org/whl/cu118
-    - micromamba run -n ibrl pip install -r third_party/ibrl/requirements.txt
-    - micromamba run -n ibrl bash -lc "cd third_party/ibrl/common_utils && make"
+    - >
+      bash -lc 'if micromamba run -n ibrl python -V >/dev/null 2>&1; then echo "ibrl env already exists; skipping create"; else micromamba create -n ibrl python=3.9 pip -y; fi'
+    - micromamba run -n ibrl python -m pip install 'torch==2.1.0' 'torchvision==0.16.0' --index-url https://download.pytorch.org/whl/cu118
+    - micromamba run -n ibrl python -m pip install -r third_party/ibrl/requirements.txt
+    - >
+      micromamba run -n ibrl bash -lc "[ -x /usr/local/cuda/bin/nvcc ] || { echo 'ERROR: nvcc missing at /usr/local/cuda/bin/nvcc' >&2; exit 1; }; cd third_party/ibrl/common_utils && mkdir -p build && cd build && cmake -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc .. && make -j"
