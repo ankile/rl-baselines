@@ -128,3 +128,22 @@ index 766a42e..9104e63 100644
  #SBATCH --cpus-per-task=12
  #SBATCH --mem=128G
  #SBATCH --gres=gpu:1
+diff --git a/main.py b/main.py
+index c95f3e9..983c5d8 100644
+--- a/main.py
++++ b/main.py
+@@ -16,6 +16,7 @@ import numpy as np
+ FLAGS = flags.FLAGS
+
+ flags.DEFINE_string('run_group', 'Debug', 'Run group.')
++flags.DEFINE_string('wandb_project', 'qam-reproduce', 'Wandb project name.')
+ flags.DEFINE_string('tags', 'Default', 'Wandb tag.')
+ flags.DEFINE_integer('seed', 0, 'Random seed.')
+ flags.DEFINE_string('env_name', 'cube-triple-play-singletask-task2-v0', 'Environment (dataset) name.')
+@@ -71,7 +72,7 @@ class LoggingHelper:
+
+ def main(_):
+     exp_name = get_exp_name(FLAGS)
+-    run = setup_wandb(project='qam-reproduce', group=FLAGS.run_group, name=exp_name, tags=FLAGS.tags.split(","))
++    run = setup_wandb(project=FLAGS.wandb_project, group=FLAGS.run_group, name=exp_name, tags=FLAGS.tags.split(","))
+     FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, FLAGS.run_group, FLAGS.env_name, exp_name)

@@ -51,25 +51,46 @@ cd rl-baselines
 
    Note: EXPO env creation auto-installs legacy MuJoCo 2.1.0 into `~/.mujoco/mujoco210` if missing. On offline nodes, pre-place that directory before running bootstrap.
 
-5. Validate harness config for the canonical Square benchmark:
+5. Download pretrained checkpoints and data required by baselines:
+
+   **ibrl** — Download the release data and models from [Google Drive](https://drive.google.com/file/d/1F2yH84Iqv0qRPmfH8o-kSzgtfaoqMzWE/view?usp=sharing), then extract into `third_party/ibrl/release/`. After extraction the directory should contain `release/data/` and `release/model/` alongside the existing `release/cfgs/`.
+
+   ```bash
+   # Download with gdown (pip install gdown if needed)
+   gdown --fuzzy "https://drive.google.com/file/d/1F2yH84Iqv0qRPmfH8o-kSzgtfaoqMzWE/view?usp=sharing" -O /tmp/ibrl_release.zip
+   unzip /tmp/ibrl_release.zip -d third_party/ibrl/release/
+   ```
+
+   **dsrl** — Run pretraining to generate the diffusion policy checkpoint used by the online RL config. This requires the DPPO training data, which auto-downloads from Google Drive on first run:
+
+   ```bash
+   micromamba run -n dsrl bash -lc "cd third_party/dsrl/dppo && \
+     DPPO_LOG_DIR=./log DPPO_DATA_DIR=./log \
+     python script/run.py --config-path=../cfg/robomimic/pretrain/square \
+     --config-name=pre_diffusion_mlp"
+   ```
+
+   After pretraining completes, update `base_policy_path` in `third_party/dsrl/cfg/robomimic/dsrl_square_comparison.yaml` to point to the generated checkpoint (e.g., `./dppo/log/robomimic-pretrain/square/<run_name>/<timestamp>/checkpoint/state_3000.pt`).
+
+6. Validate harness config for the canonical Square benchmark:
 
 ```bash
 ./benchctl validate --experiment bench/experiments/square_online_rl.yaml
 ```
 
-6. Render generated sbatch files:
+7. Render generated sbatch files:
 
 ```bash
 ./benchctl render --experiment bench/experiments/square_online_rl.yaml
 ```
 
-7. Verify launch commands (no submit):
+8. Verify launch commands (no submit):
 
 ```bash
 ./benchctl launch --experiment bench/experiments/square_online_rl.yaml --dry-run
 ```
 
-8. Submit jobs:
+9. Submit jobs:
 
 ```bash
 ./benchctl launch --experiment bench/experiments/square_online_rl.yaml

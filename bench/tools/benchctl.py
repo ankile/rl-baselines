@@ -203,7 +203,7 @@ def render_jobs(exp_path: Path, baseline_filter: set[str] | None = None) -> dict
                 f"{k}={shlex.quote(str(v))}" for k, v in env_exports_map.items()
             )
 
-        escaped = [c.replace("\"", "\\\\\"") for c in commands]
+        escaped = [c.replace('"', '\\"') for c in commands]
         commands_block = "\n".join(f'  "{c}"' for c in escaped)
 
         logs_root = profile.get("logs_root", "bench/logs/slurm")
