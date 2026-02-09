@@ -9,8 +9,11 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="${SCRIPT_DIR}"
+if [ -n "${SLURM_SUBMIT_DIR:-}" ]; then
+  ROOT="${SLURM_SUBMIT_DIR}"
+else
+  ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+fi
 SEEDS=(42 43 44)
 SEED="${SEEDS[$SLURM_ARRAY_TASK_ID]}"
 
