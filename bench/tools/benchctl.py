@@ -132,6 +132,13 @@ def make_context(exp: dict[str, Any], adapter: dict[str, Any], seed: int) -> dic
 
     ctx: dict[str, Any] = {}
     ctx.update(mapping)
+    config_override = (
+        exp.get("config_path_by_baseline", {}).get(adapter["baseline_id"], "")
+        if isinstance(exp.get("config_path_by_baseline", {}), dict)
+        else ""
+    )
+    if config_override:
+        ctx["config_path"] = config_override
     ctx.update(
         {
             "seed": seed,
@@ -143,6 +150,9 @@ def make_context(exp: dict[str, Any], adapter: dict[str, Any], seed: int) -> dic
             "wandb_project": exp["wandb"]["project"],
             "wandb_entity": exp["wandb"].get("entity", ""),
             "dataset_variant": exp.get("dataset_variant", ""),
+            "square_init_scale": exp.get("square_init_scale", 1.0),
+            "log_eval_video": exp.get("log_eval_video", 0),
+            "num_eval_video_episode": exp.get("num_eval_video_episode", 10),
         }
     )
     return ctx

@@ -20,8 +20,15 @@ baselines:
     upstream_commit: 3c457da3689cc90f881bcdf42a0a578f4a1f60aa
     track_paths:
       - scripts/square_online_rl.sbatch
+      - scripts/square_rlpd_initscale_10.sbatch
+      - scripts/square_rlpd_initscale_50.sbatch
+      - scripts/square_rlpd_initscale_80.sbatch
+      - scripts/square_rlpd_initscale_100.sbatch
       - train_rl.py
+      - evaluate/eval.py
+      - env/robosuite_wrapper.py
       - release/cfgs/robomimic_rl/square_state_rlpd_online.yaml
+      - release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml
     patches:
       - bench/tracking/patches/ibrl/20260208_square_online_rl.patch
 

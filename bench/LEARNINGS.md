@@ -19,6 +19,8 @@ These notes encode project-specific expectations so future changes stay aligned 
 - If prerequisites are missing or state is inconsistent, fail loudly.
 - Error messages should be direct and actionable.
 - Do not hide setup/runtime failures behind warnings when runs would fail anyway.
+- Avoid `try/except` as a control-flow fallback for normal runtime paths.
+- If a requested feature cannot run (e.g., video logging), fail with a clear error instead of continuing.
 
 ## Practical Rule
 

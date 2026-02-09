@@ -15,8 +15,11 @@ launch:
     python train_rl.py
     --config_path {config_path}
     --seed {seed}
+    --square_init_scale {square_init_scale}
     --wandb_project {wandb_project}
     --wandb_entity {wandb_entity}
+    --log_eval_video {log_eval_video}
+    --num_eval_video_episode {num_eval_video_episode}
     --num_train_step {max_steps}
     --num_eval_episode {eval_episodes}
     --log_per_step {eval_interval}
@@ -42,3 +45,4 @@ preflight_checks:
   required_files:
     - train_rl.py
     - release/cfgs/robomimic_rl/square_state_rlpd_online.yaml
+    - release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml

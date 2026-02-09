@@ -1,0 +1,44 @@
+version: 1
+name: square-rlpd-initscale-50
+
+task_id: nut_assembly_square
+env_alias_by_baseline:
+  ibrl: NutAssemblySquare
+
+wandb:
+  project: rlpd-square-initscale
+  entity: ankile
+  tags_common:
+    - square
+    - rlpd
+    - init-scale
+
+seeds: [1, 2, 3, 4, 5]
+config_path_by_baseline:
+  ibrl: release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml
+square_init_scale: 0.5
+log_eval_video: 1
+num_eval_video_episode: 10
+
+train_budget:
+  max_steps: 10000000
+  offline_steps: 200000
+  online_steps: 10000000
+
+eval:
+  episodes: 100
+  interval: 100000
+
+cluster:
+  profile: default
+
+resources:
+  time: 4-00:00:00
+  gpus: 1
+  cpus: 12
+  mem: 64G
+
+baselines:
+  - id: ibrl
+    enabled: true
+    tags: [RLPD]
