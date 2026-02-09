@@ -49,6 +49,8 @@ cd rl-baselines
 ./benchctl bootstrap --create-envs
 ```
 
+   Note: EXPO env creation auto-installs legacy MuJoCo 2.1.0 into `~/.mujoco/mujoco210` if missing. On offline nodes, pre-place that directory before running bootstrap.
+
 5. Validate harness config for the canonical Square benchmark:
 
 ```bash
@@ -126,7 +128,7 @@ gh auth login -h github.com
 
 ## Prerequisites
 
-- Required: `git`, `python`, `zsh`, `micromamba`, `sbatch` (for launch).
+- Required: `git`, `python`, `zsh`, `micromamba`, `sbatch` (for launch), `curl`, `tar`.
 - Optional: `gh` for GitHub automation.
 - Note: this harness assumes `zsh` and executes setup commands under `zsh -lic`.
 

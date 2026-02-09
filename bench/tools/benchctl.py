@@ -281,7 +281,7 @@ def detect_command(exe: str) -> tuple[bool, str]:
 
 def cmd_doctor(_: argparse.Namespace) -> int:
     checks: list[tuple[str, bool, str, bool]] = []
-    required_cmds = ["git", "python", "zsh", "micromamba", "sbatch"]
+    required_cmds = ["git", "python", "zsh", "micromamba", "sbatch", "curl", "tar"]
     optional_cmds = ["gh"]
 
     for exe in required_cmds:

@@ -1,6 +1,6 @@
 version: 1
-generated: '2026-02-08T01:52:53.725072+00:00'
+generated: '2026-02-09T01:44:10.590928+00:00'
 platform: linux-64
 baseline: expo
-spec_sha256: 48cb4efc18e37a8daf708819b0661c2e01fb289337de76aff1286f9fb333905c
+spec_sha256: 773f2fde3ef2e3434b4349f25d3e1cf6052800b0d4180292527903fb8eb643ad
 spec_file: bench/envs/expo.environment.yml
