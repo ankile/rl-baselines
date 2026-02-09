@@ -152,6 +152,20 @@ Regenerate env lock metadata:
 ./benchctl lock-envs
 ```
 
+## Direct Sbatch Scripts
+
+If you prefer direct, editable sbatch files (no render/launch wrapper), use these root-level scripts:
+
+```bash
+sbatch square_expo.sbatch
+sbatch square_qam.sbatch
+sbatch square_dsrl.sbatch
+sbatch square_ibrl.sbatch
+sbatch square_rlpd.sbatch
+```
+
+Each script uses seeds `[42, 43, 44]` via `#SBATCH --array=0-2` and runs from `third_party/<baseline>`.
+
 ## GitHub Setup
 
 Create the public repo under your account (if not already created):

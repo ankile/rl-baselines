@@ -37,6 +37,9 @@ resources:
   cpus: 12
   mem: 64G
 
+script_name_by_baseline:
+  ibrl: ibrl-rlpd
+
 baselines:
   - id: expo
     enabled: true

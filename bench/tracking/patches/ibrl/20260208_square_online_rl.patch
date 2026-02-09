@@ -580,10 +580,10 @@ index 9a74497..20c33c7 100644
  
  def _load_model(weight_file, env: PixelRobosuite, device, cfg: Optional[MainConfig] = None):
 diff --git a/train_rl.py b/train_rl.py
-index 2b553e9..e04343c 100644
+index 2b553e9..1e589e8 100644
 --- a/train_rl.py
 +++ b/train_rl.py
-@@ -67,6 +67,29 @@ class MainConfig(common_utils.RunConfig):
+@@ -67,6 +67,52 @@ class MainConfig(common_utils.RunConfig):
      # log
      save_dir: str = "exps/rl/run1"
      use_wb: int = 0
@@ -594,6 +594,22 @@ index 2b553e9..e04343c 100644
 +    log_eval_video: int = 0
 +    num_eval_video_episode: int = 10
 +
++    @staticmethod
++    def _short_env_name(task_name: str) -> str:
++        env_name = task_name.lower()
++        if "square" in env_name:
++            return "square"
++        if "can" in env_name:
++            return "can"
++        if "lift" in env_name:
++            return "lift"
++        return env_name
++
++    @staticmethod
++    def _format_scale(scale: float) -> str:
++        # Keep run names filesystem- and shell-friendly.
++        return format(scale, ".3g").replace(".", "p")
++
 +    @property
 +    def wb_run(self):
 +        """Generate EXPO-style run name: {method}_{env_name}_s{seed}"""
@@ -601,19 +617,26 @@ index 2b553e9..e04343c 100644
 +            return None
 +        # Allow explicit run labeling for baselines (e.g., rlpd) without changing behavior.
 +        method = self.run_name_method if self.run_name_method else self.q_agent.act_method
-+        # Extract env name from task_name (e.g., "NutAssemblySquare" -> "square")
-+        env_name = self.task_name.lower()
-+        if "square" in env_name:
-+            env_name = "square"
-+        elif "can" in env_name:
-+            env_name = "can"
-+        elif "lift" in env_name:
-+            env_name = "lift"
++        env_name = self._short_env_name(self.task_name)
++        if self.task_name == "NutAssemblySquare":
++            scale = self._format_scale(self.square_init_scale)
++            return f"{method}_{env_name}_init{scale}_s{self.seed}"
 +        return f"{method}_{env_name}_s{self.seed}"
++
++    @property
++    def wb_group(self):
++        if not self.use_wb:
++            return None
++        method = self.run_name_method if self.run_name_method else self.q_agent.act_method
++        env_name = self._short_env_name(self.task_name)
++        if self.task_name == "NutAssemblySquare":
++            scale = self._format_scale(self.square_init_scale)
++            return f"{method}_{env_name}_init{scale}"
++        return f"{method}_{env_name}"
  
      def __post_init__(self):
          self.rl_cameras = self.rl_camera.split("+")
-@@ -91,6 +114,17 @@ class MainConfig(common_utils.RunConfig):
+@@ -91,6 +137,17 @@ class MainConfig(common_utils.RunConfig):
          else:
              self.robots: list[str] = ["Panda"]
  
@@ -631,7 +654,7 @@ index 2b553e9..e04343c 100644
      @property
      def bc_cameras(self) -> list[str]:
          if not self.bc_policy:
-@@ -195,6 +229,7 @@ class Workspace:
+@@ -195,6 +252,7 @@ class Workspace:
              obs_stack=self.obs_stack,
              state_stack=self.cfg.state_stack,
              prop_stack=self.prop_stack,
@@ -639,7 +662,7 @@ index 2b553e9..e04343c 100644
              record_sim_state=bool(self.cfg.save_per_success > 0),
          )
          self.eval_env_params = dict(
-@@ -210,6 +245,7 @@ class Workspace:
+@@ -210,6 +268,7 @@ class Workspace:
              obs_stack=self.obs_stack,
              state_stack=self.cfg.state_stack,
              prop_stack=self.prop_stack,
@@ -647,7 +670,7 @@ index 2b553e9..e04343c 100644
          )
          self.eval_env = PixelRobosuite(**self.eval_env_params)  # type: ignore
  
-@@ -251,11 +287,11 @@ class Workspace:
+@@ -251,11 +310,11 @@ class Workspace:
              assert self.cfg.save_per_success <= 0, "cannot save a non-growing replay"
              self.replay.freeze_bc_replay = True
  
@@ -661,7 +684,7 @@ index 2b553e9..e04343c 100644
                  env_params=self.eval_env_params,
                  agent=policy,
                  num_proc=10,
-@@ -264,7 +300,7 @@ class Workspace:
+@@ -264,7 +323,7 @@ class Workspace:
                  verbose=False,
              )
          else:
@@ -670,7 +693,7 @@ index 2b553e9..e04343c 100644
                  env_params=self.eval_env_params,
                  agent=policy,
                  num_game=self.cfg.num_eval_episode,
-@@ -274,7 +310,7 @@ class Workspace:
+@@ -274,7 +333,7 @@ class Workspace:
              )
  
          np.random.set_state(random_state)
@@ -679,7 +702,7 @@ index 2b553e9..e04343c 100644
  
      def warm_up(self):
          # warm up stage, fill the replay with some episodes
-@@ -320,7 +356,10 @@ class Workspace:
+@@ -320,7 +379,10 @@ class Workspace:
              wb_run_name=self.cfg.wb_run,
              wb_group_name=self.cfg.wb_group,
              config=self.cfg_dict,
@@ -690,7 +713,7 @@ index 2b553e9..e04343c 100644
          self.agent.set_stats(stat)
          saver = common_utils.TopkSaver(save_dir=self.work_dir, topk=1)
  
-@@ -353,6 +392,10 @@ class Workspace:
+@@ -353,6 +415,10 @@ class Workspace:
                      stat["score/train_score"].append(float(success))
                      stat["data/episode_len"].append(self.train_env.time_step)
  
@@ -701,7 +724,7 @@ index 2b553e9..e04343c 100644
                      # reset env
                      obs, _ = self.train_env.reset()
                      self.replay.new_episode(obs)
-@@ -388,8 +431,16 @@ class Workspace:
+@@ -388,8 +454,16 @@ class Workspace:
          with stopwatch.time("eval"):
              eval_seed = (self.global_step // self.cfg.log_per_step) * self.cfg.num_eval_episode
              stat["eval/seed"].append(eval_seed)
@@ -720,7 +743,7 @@ index 2b553e9..e04343c 100644
  
              original_act_method = self.agent.cfg.act_method
              # if self.agent.cfg.act_method != "rl":
-@@ -400,18 +451,56 @@ class Workspace:
+@@ -400,18 +474,56 @@ class Workspace:
  
              if self.agent.cfg.act_method == "ibrl_soft":
                  with self.agent.override_act_method("ibrl"):
@@ -781,7 +804,7 @@ index 2b553e9..e04343c 100644
      def rl_train(self, stat: common_utils.MultiCounter):
          stddev = utils.schedule(self.cfg.stddev_schedule, self.global_step)
          for i in range(self.cfg.num_critic_update):
-@@ -442,6 +531,8 @@ class Workspace:
+@@ -442,6 +554,8 @@ class Workspace:
              wb_run_name=self.cfg.wb_run,
              wb_group_name=self.cfg.wb_group,
              config=self.cfg_dict,
@@ -790,7 +813,7 @@ index 2b553e9..e04343c 100644
          )
          saver = common_utils.TopkSaver(save_dir=self.work_dir, topk=1)
  
-@@ -454,7 +545,8 @@ class Workspace:
+@@ -454,7 +568,8 @@ class Workspace:
                      stat[k].append(v)
  
              eval_seed = epoch * self.cfg.pretrain_epoch_len
@@ -800,7 +823,7 @@ index 2b553e9..e04343c 100644
              stat["pretrain/score"].append(score)
  
              stat.summary(epoch, reset=True)
-@@ -503,8 +595,6 @@ def main():
+@@ -503,8 +618,6 @@ def main():
      if cfg.use_wb:
          wandb.finish()
  

@@ -182,6 +182,11 @@ def render_jobs(exp_path: Path, baseline_filter: set[str] | None = None) -> dict
     generated: dict[str, Path] = {}
     out_root = ROOT / "bench" / "generated" / "slurm" / exp["name"]
     out_root.mkdir(parents=True, exist_ok=True)
+    script_name_overrides = exp.get("script_name_by_baseline", {})
+    if script_name_overrides is None:
+        script_name_overrides = {}
+    if not isinstance(script_name_overrides, dict):
+        raise BenchError("script_name_by_baseline must be a mapping from baseline id to script stem")
 
     baseline_ids = enabled_baselines(exp)
     if baseline_filter is not None:
@@ -242,7 +247,13 @@ def render_jobs(exp_path: Path, baseline_filter: set[str] | None = None) -> dict
             env_exports=env_exports,
         )
 
-        out_path = out_root / f"{baseline_id}.sbatch"
+        script_stem = script_name_overrides.get(baseline_id, baseline_id)
+        if not isinstance(script_stem, str) or not script_stem.strip():
+            raise BenchError(f"Invalid script_name_by_baseline[{baseline_id!r}]: expected non-empty string")
+        out_path = out_root / f"{script_stem}.sbatch"
+        legacy_out_path = out_root / f"{baseline_id}.sbatch"
+        if legacy_out_path != out_path and legacy_out_path.exists():
+            legacy_out_path.unlink()
         out_path.write_text(script_text, encoding="utf-8")
         generated[baseline_id] = out_path
 
