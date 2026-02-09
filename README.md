@@ -61,16 +61,25 @@ cd rl-baselines
    unzip /tmp/ibrl_release.zip -d third_party/ibrl/release/
    ```
 
-   **dsrl** — Run pretraining to generate the diffusion policy checkpoint used by the online RL config. This requires the DPPO training data, which auto-downloads from Google Drive on first run:
+   **dsrl** — Download the published pretrained diffusion checkpoint and normalization stats from Google Drive:
 
    ```bash
-   micromamba run -n dsrl bash -lc "cd third_party/dsrl/dppo && \
-     DPPO_LOG_DIR=./log DPPO_DATA_DIR=./log \
-     python script/run.py --config-path=../cfg/robomimic/pretrain/square \
-     --config-name=pre_diffusion_mlp"
-   ```
+   cd third_party/dsrl/dppo
 
-   After pretraining completes, update `base_policy_path` in `third_party/dsrl/cfg/robomimic/dsrl_square_comparison.yaml` to point to the generated checkpoint (e.g., `./dppo/log/robomimic-pretrain/square/<run_name>/<timestamp>/checkpoint/state_3000.pt`).
+   # Pretrained checkpoint
+   mkdir -p log/robomimic-pretrain/square/square_pre_diffusion_mlp_ta4_td20/2024-07-10_01-46-16/checkpoint
+   micromamba run -n dsrl gdown --fuzzy \
+     "https://drive.google.com/file/d/1lP9mNe2AxMigfOywcaHOOR7FxQ-KR_Ee/view?usp=drive_link" \
+     -O log/robomimic-pretrain/square/square_pre_diffusion_mlp_ta4_td20/2024-07-10_01-46-16/checkpoint/state_8000.pt
+
+   # Normalization statistics
+   mkdir -p log/robomimic/square
+   micromamba run -n dsrl gdown --fuzzy \
+     "https://drive.google.com/file/d/1_75UM0frCZVtcROgfWsdJ0FstToZd1b5/view?usp=drive_link" \
+     -O log/robomimic/square/normalization.npz
+
+   cd ../../..
+   ```
 
 6. Validate harness config for the canonical Square benchmark:
 
