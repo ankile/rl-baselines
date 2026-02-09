@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --time=4-00:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-2
+#SBATCH --array=0
 #SBATCH --job-name=square-rlpd
 #SBATCH --output=logs/square_rlpd_%A_%a.out
 
