@@ -7,3 +7,4 @@ create:
     - micromamba create -n dsrl python=3.10 pip -y
     - micromamba run -n dsrl bash -lc "cd third_party/dsrl/dppo && pip install -e . && pip install -e .[robomimic] && pip install -e .[gym]"
     - micromamba run -n dsrl bash -lc "cd third_party/dsrl/stable-baselines3 && pip install -e ."
+    - micromamba install -n dsrl -c conda-forge glew mesalib libgl-devel libegl-devel -y
