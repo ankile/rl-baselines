@@ -9,15 +9,23 @@
 
 set -euo pipefail
 
-ROOT="/iris/u/ankile/self-improving-robots-workspace/rl-baselines"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${SCRIPT_DIR}"
 SEEDS=(42 43 44)
 SEED="${SEEDS[$SLURM_ARRAY_TASK_ID]}"
 
 mkdir -p "${ROOT}/logs"
 
+if [ -d "${ROOT}/third_party/qam" ]; then
+  QAM_DIR="${ROOT}/third_party/qam"
+else
+  echo "ERROR: Missing '${ROOT}/third_party/qam'. Run './benchctl bootstrap --baseline qam' from '${ROOT}'." >&2
+  exit 1
+fi
+
 micromamba run -n qam bash -lc "
 set -euo pipefail
-cd '${ROOT}/third_party/qam'
+cd '${QAM_DIR}'
 export MUJOCO_GL=egl
 export WANDB_DIR=.
 export WANDB__SERVICE_WAIT=120

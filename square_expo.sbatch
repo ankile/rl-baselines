@@ -9,15 +9,23 @@
 
 set -euo pipefail
 
-ROOT="/iris/u/ankile/self-improving-robots-workspace/rl-baselines"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${SCRIPT_DIR}"
 SEEDS=(42 43 44)
 SEED="${SEEDS[$SLURM_ARRAY_TASK_ID]}"
 
 mkdir -p "${ROOT}/logs"
 
+if [ -d "${ROOT}/third_party/EXPO" ]; then
+  EXPO_DIR="${ROOT}/third_party/EXPO"
+else
+  echo "ERROR: Missing '${ROOT}/third_party/EXPO'. Run './benchctl bootstrap --baseline expo' from '${ROOT}'." >&2
+  exit 1
+fi
+
 micromamba run -n expo bash -lc "
 set -euo pipefail
-cd '${ROOT}/third_party/EXPO'
+cd '${EXPO_DIR}'
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export D4RL_SUPPRESS_IMPORT_ERROR=1
 export WANDB_DIR=.

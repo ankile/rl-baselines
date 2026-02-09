@@ -9,15 +9,23 @@
 
 set -euo pipefail
 
-ROOT="/iris/u/ankile/self-improving-robots-workspace/rl-baselines"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${SCRIPT_DIR}"
 SEEDS=(42 43 44)
 SEED="${SEEDS[$SLURM_ARRAY_TASK_ID]}"
 
 mkdir -p "${ROOT}/logs"
 
+if [ -d "${ROOT}/third_party/dsrl" ]; then
+  DSRL_DIR="${ROOT}/third_party/dsrl"
+else
+  echo "ERROR: Missing '${ROOT}/third_party/dsrl'. Run './benchctl bootstrap --baseline dsrl' from '${ROOT}'." >&2
+  exit 1
+fi
+
 micromamba run -n dsrl bash -lc "
 set -euo pipefail
-cd '${ROOT}/third_party/dsrl'
+cd '${DSRL_DIR}'
 export MUJOCO_GL=egl
 export WANDB_DIR=.
 export WANDB__SERVICE_WAIT=120
