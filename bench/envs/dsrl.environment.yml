@@ -4,6 +4,6 @@ manager: micromamba
 
 create:
   commands:
-    - micromamba create -n dsrl python=3.9 pip -y
+    - micromamba create -n dsrl python=3.10 pip -y
     - micromamba run -n dsrl bash -lc "cd third_party/dsrl/dppo && pip install -e . && pip install -e .[robomimic] && pip install -e .[gym]"
     - micromamba run -n dsrl bash -lc "cd third_party/dsrl/stable-baselines3 && pip install -e ."
