@@ -1,5 +1,5 @@
 diff --git a/common_utils/py/multi_counter.py b/common_utils/py/multi_counter.py
-index 0e5c1a9..519ab79 100644
+index 0e5c1a9..3c56b8a 100644
 --- a/common_utils/py/multi_counter.py
 +++ b/common_utils/py/multi_counter.py
 @@ -69,6 +69,8 @@ class MultiCounter:
@@ -11,25 +11,369 @@ index 0e5c1a9..519ab79 100644
      ):
          self.stats = defaultdict(lambda: ValueStats())
          self.last_time = datetime.now()
-@@ -79,13 +81,15 @@ class MultiCounter:
+@@ -79,9 +81,12 @@ class MultiCounter:
          self.use_wandb = use_wandb
          if use_wandb:
              os.environ["WANDB_INIT_TIMEOUT"] = "300"
--            wandb.init(
--                # set the wandb project where this run will be logged
++            # Use wb_project if provided, otherwise fall back to wb_exp_name for backward compat
++            project_name = wb_project if wb_project else wb_exp_name
+             wandb.init(
+                 # set the wandb project where this run will be logged
 -                project=wb_exp_name,
-+            init_kwargs = dict(
-+                project=wb_project if wb_project else wb_exp_name,
++                project=project_name,
++                entity=wb_entity,
                  name=wb_run_name,
                  group=wb_group_name,
                  config={} if config is None else config,
-             )
-+            if wb_entity:
-+                init_kwargs["entity"] = wb_entity
-+            wandb.init(**init_kwargs)
+@@ -129,7 +134,7 @@ class MultiCounter:
  
-     def __getitem__(self, key):
-         if len(key) > self.max_key_len:
+         if self.use_wandb:
+             to_log = {f"{prefix}{k}": v.mean() for k, v in self.stats.items() if v.counter > 0}
+-            wandb.log(to_log)
++            wandb.log(to_log, step=global_counter)
+ 
+         if reset:
+             self.reset()
+diff --git a/env/robosuite_wrapper.py b/env/robosuite_wrapper.py
+index 2023388..07ad9e8 100644
+--- a/env/robosuite_wrapper.py
++++ b/env/robosuite_wrapper.py
+@@ -1,9 +1,11 @@
+ from typing import Optional
+ from collections import defaultdict, deque
++import math
+ 
+ import torch
+ import robosuite
+ from robosuite import load_controller_config
++from robosuite.utils.placement_samplers import SequentialCompositeSampler
+ import numpy as np
+ from common_utils import ibrl_utils as utils
+ import common_utils
+@@ -82,6 +84,7 @@ class PixelRobosuite:
+         cond_action=0,
+         flip_image=True,  # only false if using with eval_with_init_state
+         ctrl_delta=True,
++        square_init_scale: float = 1.0,
+         record_sim_state: bool = False,
+     ):
+         assert isinstance(camera_names, list)
+@@ -101,6 +104,7 @@ class PixelRobosuite:
+             camera_widths=image_size,
+             horizon=episode_length,
+         )
++        self._apply_square_init_scale(env_name, square_init_scale)
+         self.rl_cameras = rl_cameras if isinstance(rl_cameras, list) else [rl_cameras]
+         self.image_size = image_size
+         self.rl_image_size = rl_image_size or image_size
+@@ -133,6 +137,35 @@ class PixelRobosuite:
+         self.past_obses = defaultdict(list)
+         self.past_actions = deque(maxlen=self.cond_action)
+ 
++    def _scale_range(self, value_range, scale: float) -> tuple[float, float]:
++        lo = float(value_range[0])
++        hi = float(value_range[1])
++        center = 0.5 * (lo + hi)
++        half = 0.5 * (hi - lo) * scale
++        return (center - half, center + half)
++
++    def _apply_square_init_scale(self, env_name: str, square_init_scale: float) -> None:
++        if env_name != "NutAssemblySquare" or square_init_scale == 1.0:
++            return
++
++        placement_initializer = getattr(self.env, "placement_initializer", None)
++        if not isinstance(placement_initializer, SequentialCompositeSampler):
++            raise RuntimeError(
++                "NutAssemblySquare placement_initializer is not SequentialCompositeSampler; "
++                "cannot apply square_init_scale."
++            )
++
++        square_sampler = placement_initializer.samplers.get("SquareNutSampler")
++        if square_sampler is None:
++            raise RuntimeError("SquareNutSampler not found; cannot apply square_init_scale.")
++
++        square_sampler.x_range = self._scale_range(square_sampler.x_range, square_init_scale)
++        square_sampler.y_range = self._scale_range(square_sampler.y_range, square_init_scale)
++
++        span = 2.0 * math.pi * square_init_scale
++        half_span = 0.5 * span
++        square_sampler.rotation = (math.pi - half_span, math.pi + half_span)
++
+     @property
+     def observation_shape(self):
+         if self.use_state:
+diff --git a/evaluate/eval.py b/evaluate/eval.py
+index 576db0a..8a256ad 100644
+--- a/evaluate/eval.py
++++ b/evaluate/eval.py
+@@ -13,11 +13,16 @@ def run_eval(
+     record_dir=None,
+     verbose=True,
+     eval_mode=True,
+-) -> list[float]:
+-    scores = []
+-    lens = []
++    record_single_file=False,
++    record_file_name=None,
++    record_num_episode=None,
++) -> dict:
++    scores = []  # per-episode returns
++    lengths = []  # per-episode lengths (all episodes)
++    success_lengths = []  # lengths of successful episodes only
+     stopwatch = Stopwatch()
+     recorder = None if record_dir is None else Recorder(record_dir)
++    video_path = None
+ 
+     env = PixelRobosuite(**env_params)
+     with torch.no_grad(), utils.eval_mode(agent):
+@@ -28,9 +33,14 @@ def run_eval(
+             with stopwatch.time("reset"):
+                 obs, image_obs = env.reset()
+ 
++            record_this_episode = recorder is not None
++            if record_this_episode and record_single_file and record_num_episode is not None:
++                record_this_episode = episode_idx < record_num_episode
++
+             terminal = False
+             while not terminal:
+-                if recorder is not None:
++                if record_this_episode:
++                    assert image_obs, "Eval video recording enabled but image_obs is empty."
+                     recorder.add(image_obs)
+ 
+                 with stopwatch.time(f"act"):
+@@ -48,19 +58,35 @@ def run_eval(
+                     f"reward: {np.sum(rewards)}, len: {env.time_step}"
+                 )
+ 
+-            scores.append(np.sum(rewards))
+-            if scores[-1] > 0:
+-                lens.append(env.time_step)
++            episode_return = np.sum(rewards)
++            episode_length = env.time_step
++            success = episode_return > 0
++
++            scores.append(episode_return)
++            lengths.append(episode_length)
++            if success:
++                success_lengths.append(episode_length)
+ 
+-            if recorder is not None:
++            if recorder is not None and not record_single_file:
+                 recorder.save(f"episode{episode_idx}")
+ 
++    if recorder is not None and record_single_file:
++        name = "eval_video" if record_file_name is None else record_file_name
++        video_path = recorder.save(name)
++
+     if verbose:
+         print(f"num game: {len(scores)}, seed: {seed}, score: {np.mean(scores)}")
+-        print(f"average steps for success games: {np.mean(lens)}")
++        print(f"average steps for success games: {np.mean(success_lengths) if success_lengths else 0}")
+         stopwatch.summary()
+ 
+-    return scores
++    return {
++        "success_rate": float(np.mean([s > 0 for s in scores])),
++        "success_length_mean": float(np.mean(success_lengths)) if success_lengths else 0.0,
++        "return_mean": float(np.mean(scores)),
++        "length_mean": float(np.mean(lengths)),
++        "scores": scores,  # backward compat
++        "video_path": video_path,
++    }
+ 
+ 
+ if __name__ == "__main__":
+@@ -130,11 +156,11 @@ if __name__ == "__main__":
+         t = time.time()
+         if args.mp >= 1:
+             assert args.record_dir is None
+-            scores = mp_run_eval(
++            eval_result = mp_run_eval(
+                 env_params, agent, args.num_game, args.mp, args.seed, verbose=args.verbose
+             )
+         else:
+-            scores = run_eval(
++            eval_result = run_eval(
+                 env_params,
+                 agent,
+                 args.num_game,
+@@ -142,10 +168,11 @@ if __name__ == "__main__":
+                 args.record_dir,
+                 verbose=args.verbose,
+             )
++        scores = eval_result["scores"]
+         all_scores.append(scores)
+         print(f"weight: {weight}")
+-        print(f"score: {np.mean(scores)}, time: {time.time() - t:.1f}")
+-        weight_scores.append((weight, np.mean(scores)))
++        print(f"score: {eval_result['success_rate']}, time: {time.time() - t:.1f}")
++        weight_scores.append((weight, eval_result["success_rate"]))
+ 
+     if len(weight_scores) > 1:
+         weight_scores = sorted(weight_scores, key=lambda x: -x[1])
+diff --git a/evaluate/multi_process_eval.py b/evaluate/multi_process_eval.py
+index 1ba4f16..1e4af05 100644
+--- a/evaluate/multi_process_eval.py
++++ b/evaluate/multi_process_eval.py
+@@ -30,22 +30,31 @@ class EvalProc:
+             np.random.seed(seed)
+             obs, _ = env.reset()
+             success = False
++            episode_reward = 0.0
+             while not env.terminal:
+                 # NOTE: obs["obs"] should be a cpu tensor because it
+                 # is more complicated to move cuda tensors around.
+                 self.send_queue.put((self.process_id, obs))
+                 action = self.recv_queue.get()
+-                obs, _, _, success, _ = env.step(action)
++                obs, reward, _, success, _ = env.step(action)
++                episode_reward += reward
+ 
+-            results[seed] = float(success)
++            # Store both success and length info
++            results[seed] = {
++                "success": float(success),
++                "length": env.time_step,
++                "return": episode_reward,
++            }
+ 
+         self.terminal_queue.put((self.process_id, results))
+         return
+ 
+ 
+-def run_eval(env_params, agent, num_game, num_proc, seed, verbose=True) -> list[float]:
++def run_eval(env_params, agent, num_game, num_proc, seed, verbose=True) -> dict:
+     assert num_game % num_proc == 0
+-    env_params["device"] = "cpu"  # avoid sending cuda across processes
++    # Never mutate caller-owned params; they are reused later for single-process eval video.
++    eval_env_params = dict(env_params)
++    eval_env_params["device"] = "cpu"  # avoid sending cuda tensors across processes
+ 
+     game_per_proc = num_game // num_proc
+     terminal_queue = mp.Queue()
+@@ -53,7 +62,7 @@ def run_eval(env_params, agent, num_game, num_proc, seed, verbose=True) -> list[
+     eval_procs = []
+     for i in range(num_proc):
+         seeds = list(range(seed + i * game_per_proc, seed + (i + 1) * game_per_proc))
+-        eval_procs.append(EvalProc(seeds, i, env_params, terminal_queue))
++        eval_procs.append(EvalProc(seeds, i, dict(eval_env_params), terminal_queue))
+ 
+     put_queues = {i: proc.recv_queue for i, proc in enumerate(eval_procs)}
+     get_queues = {i: proc.send_queue for i, proc in enumerate(eval_procs)}
+@@ -92,13 +101,28 @@ def run_eval(env_params, agent, num_game, num_proc, seed, verbose=True) -> list[
+             for idx, action in zip(idxs, batch_action):
+                 put_queues[idx].put(action)
+ 
++    # Process results
++    scores = []
++    lengths = []
++    success_lengths = []
++    for seed_key in sorted(list(results.keys())):
++        result = results[seed_key]
++        scores.append(result["return"])
++        lengths.append(result["length"])
++        if result["success"] > 0:
++            success_lengths.append(result["length"])
++
+     if verbose:
+         print(f"total time {time.time() - t:.2f}")
+-        for seed in sorted(list(results.keys())):
+-            print(f"seed {seed}: score: {float(results[seed])}")
++        for seed_key in sorted(list(results.keys())):
++            result = results[seed_key]
++            print(f"seed {seed_key}: score: {result['success']}, length: {result['length']}")
+         print(common_utils.wrap_ruler(""))
+ 
+-    scores = []
+-    for seed in sorted(list(results.keys())):
+-        scores.append(results[seed])
+-    return scores
++    return {
++        "success_rate": float(np.mean([r["success"] for r in results.values()])),
++        "success_length_mean": float(np.mean(success_lengths)) if success_lengths else 0.0,
++        "return_mean": float(np.mean(scores)),
++        "length_mean": float(np.mean(lengths)),
++        "scores": scores,  # backward compat
++    }
+diff --git a/release/cfgs/robomimic_rl/square_state_online.yaml b/release/cfgs/robomimic_rl/square_state_online.yaml
+new file mode 100644
+index 0000000..38bd85c
+--- /dev/null
++++ b/release/cfgs/robomimic_rl/square_state_online.yaml
+@@ -0,0 +1,36 @@
++task_name: "NutAssemblySquare"
++episode_length: 300
++stddev_max: 0.1
++use_state: 1
++state_stack: 3
++
++# IBRL-specific settings
++bc_policy: "release/model/robomimic/square_state/model0.pt"
++
++# Training settings (matching EXPO)
++num_train_step: 10000000      # 10M steps (EXPO: max_steps)
++num_eval_episode: 100         # 100 eval episodes
++log_per_step: 100000          # eval every 100K steps
++num_warm_up_episode: 50       # ~5000 steps warmup (EXPO: start_training)
++num_critic_update: 20         # UTD ratio 20
++
++# Data loading
++preload_num_data: 50
++preload_datapath: "release/data/robomimic/square/processed_data96.hdf5"
++replay_buffer_size: 1000
++
++# Logging
++use_wb: 1
++mp_eval: 1
++wandb_project: "square-online-rl-saturation"
++
++# Network architecture (from existing IBRL config)
++q_agent:
++  act_method: "ibrl_soft"
++  state_critic:
++    num_q: 5
++    layer_norm: 1
++    hidden_dim: 1024
++  state_actor:
++    dropout: 0.5
++    hidden_dim: 1024
+diff --git a/release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml b/release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml
+new file mode 100644
+index 0000000..6723493
+--- /dev/null
++++ b/release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml
+@@ -0,0 +1,30 @@
++task_name: "NutAssemblySquare"
++episode_length: 300
++stddev_max: 0.1
++use_state: 1
++state_stack: 3
++mix_rl_rate: 0.5
++preload_num_data: 50
++preload_datapath: "release/data/robomimic/square/processed_data96.hdf5"
++num_warm_up_episode: 50
++num_train_step: 10000000
++replay_buffer_size: 1000
++use_wb: 1
++wandb_project: "rlpd-square-initscale"
++run_name_method: "rlpd"
++mp_eval: 1
++log_per_step: 100000
++num_eval_episode: 100
++num_critic_update: 5
++square_init_scale: 1.0
++log_eval_video: 1
++num_eval_video_episode: 10
++q_agent:
++  act_method: "rl"
++  state_critic:
++    num_q: 5
++    layer_norm: 1
++    hidden_dim: 1024
++  state_actor:
++    hidden_dim: 1024
++    dropout: 0
 diff --git a/release/cfgs/robomimic_rl/square_state_rlpd_online.yaml b/release/cfgs/robomimic_rl/square_state_rlpd_online.yaml
 new file mode 100644
 index 0000000..7b2fad3
@@ -91,17 +435,164 @@ index 0000000..309cc07
 +
 +# Run training (seed can be overridden with --seed)
 +$PYTHON train_rl.py --config_path release/cfgs/robomimic_rl/square_state_rlpd_online.yaml ${@}
+diff --git a/scripts/square_rlpd_initscale_10.sbatch b/scripts/square_rlpd_initscale_10.sbatch
+new file mode 100644
+index 0000000..f527927
+--- /dev/null
++++ b/scripts/square_rlpd_initscale_10.sbatch
+@@ -0,0 +1,26 @@
++#!/bin/bash
++#SBATCH --time=4-00:00:00
++#SBATCH --cpus-per-task=12
++#SBATCH --mem=32GB
++#SBATCH --gres=gpu:1
++#SBATCH --array=0-4
++#SBATCH --job-name=rlpd_sq_init10
++#SBATCH --output=logs/rlpd_sq_init10_%A_%a.out
++
++set -euo pipefail
++
++mkdir -p logs
++export MUJOCO_GL=egl
++cd /iris/u/ankile/self-improving-robots-workspace/ibrl
++
++PYTHON=/iris/u/ankile/envs/ibrl/bin/python
++SEEDS=(1 2 3 4 5)
++SEED=${SEEDS[$SLURM_ARRAY_TASK_ID]}
++SCALE=0.1
++
++$PYTHON train_rl.py \
++  --config_path release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml \
++  --seed ${SEED} \
++  --square_init_scale ${SCALE} \
++  --wandb_project rlpd-square-initscale \
++  ${@}
+diff --git a/scripts/square_rlpd_initscale_100.sbatch b/scripts/square_rlpd_initscale_100.sbatch
+new file mode 100644
+index 0000000..dc73313
+--- /dev/null
++++ b/scripts/square_rlpd_initscale_100.sbatch
+@@ -0,0 +1,26 @@
++#!/bin/bash
++#SBATCH --time=4-00:00:00
++#SBATCH --cpus-per-task=12
++#SBATCH --mem=32GB
++#SBATCH --gres=gpu:1
++#SBATCH --array=0-4
++#SBATCH --job-name=rlpd_sq_init100
++#SBATCH --output=logs/rlpd_sq_init100_%A_%a.out
++
++set -euo pipefail
++
++mkdir -p logs
++export MUJOCO_GL=egl
++cd /iris/u/ankile/self-improving-robots-workspace/ibrl
++
++PYTHON=/iris/u/ankile/envs/ibrl/bin/python
++SEEDS=(1 2 3 4 5)
++SEED=${SEEDS[$SLURM_ARRAY_TASK_ID]}
++SCALE=1.0
++
++$PYTHON train_rl.py \
++  --config_path release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml \
++  --seed ${SEED} \
++  --square_init_scale ${SCALE} \
++  --wandb_project rlpd-square-initscale \
++  ${@}
+diff --git a/scripts/square_rlpd_initscale_50.sbatch b/scripts/square_rlpd_initscale_50.sbatch
+new file mode 100644
+index 0000000..b5cc75f
+--- /dev/null
++++ b/scripts/square_rlpd_initscale_50.sbatch
+@@ -0,0 +1,26 @@
++#!/bin/bash
++#SBATCH --time=4-00:00:00
++#SBATCH --cpus-per-task=12
++#SBATCH --mem=32GB
++#SBATCH --gres=gpu:1
++#SBATCH --array=0-4
++#SBATCH --job-name=rlpd_sq_init50
++#SBATCH --output=logs/rlpd_sq_init50_%A_%a.out
++
++set -euo pipefail
++
++mkdir -p logs
++export MUJOCO_GL=egl
++cd /iris/u/ankile/self-improving-robots-workspace/ibrl
++
++PYTHON=/iris/u/ankile/envs/ibrl/bin/python
++SEEDS=(1 2 3 4 5)
++SEED=${SEEDS[$SLURM_ARRAY_TASK_ID]}
++SCALE=0.5
++
++$PYTHON train_rl.py \
++  --config_path release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml \
++  --seed ${SEED} \
++  --square_init_scale ${SCALE} \
++  --wandb_project rlpd-square-initscale \
++  ${@}
+diff --git a/scripts/square_rlpd_initscale_80.sbatch b/scripts/square_rlpd_initscale_80.sbatch
+new file mode 100644
+index 0000000..80955f1
+--- /dev/null
++++ b/scripts/square_rlpd_initscale_80.sbatch
+@@ -0,0 +1,26 @@
++#!/bin/bash
++#SBATCH --time=4-00:00:00
++#SBATCH --cpus-per-task=12
++#SBATCH --mem=32GB
++#SBATCH --gres=gpu:1
++#SBATCH --array=0-4
++#SBATCH --job-name=rlpd_sq_init80
++#SBATCH --output=logs/rlpd_sq_init80_%A_%a.out
++
++set -euo pipefail
++
++mkdir -p logs
++export MUJOCO_GL=egl
++cd /iris/u/ankile/self-improving-robots-workspace/ibrl
++
++PYTHON=/iris/u/ankile/envs/ibrl/bin/python
++SEEDS=(1 2 3 4 5)
++SEED=${SEEDS[$SLURM_ARRAY_TASK_ID]}
++SCALE=0.8
++
++$PYTHON train_rl.py \
++  --config_path release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml \
++  --seed ${SEED} \
++  --square_init_scale ${SCALE} \
++  --wandb_project rlpd-square-initscale \
++  ${@}
+diff --git a/train_bc.py b/train_bc.py
+index 9a74497..20c33c7 100644
+--- a/train_bc.py
++++ b/train_bc.py
+@@ -158,9 +158,10 @@ def run(cfg: MainConfig, policy):
+ 
+ 
+ def evaluate(policy, dataset: RobomimicDataset, seed, num_game):
+-    return run_eval_mp(
++    eval_result = run_eval_mp(
+         dataset.env_params, policy, num_game=num_game, seed=seed, num_proc=10, verbose=False
+     )
++    return eval_result["scores"]  # return scores list for backward compat
+ 
+ 
+ def _load_model(weight_file, env: PixelRobosuite, device, cfg: Optional[MainConfig] = None):
 diff --git a/train_rl.py b/train_rl.py
-index 2b553e9..675659a 100644
+index 2b553e9..e04343c 100644
 --- a/train_rl.py
 +++ b/train_rl.py
-@@ -67,6 +67,26 @@ class MainConfig(common_utils.RunConfig):
+@@ -67,6 +67,29 @@ class MainConfig(common_utils.RunConfig):
      # log
      save_dir: str = "exps/rl/run1"
      use_wb: int = 0
 +    wandb_project: str = "ibrl"
 +    wandb_entity: str = ""  # empty = use default
 +    run_name_method: str = ""
++    square_init_scale: float = 1.0
++    log_eval_video: int = 0
++    num_eval_video_episode: int = 10
 +
 +    @property
 +    def wb_run(self):
@@ -122,7 +613,41 @@ index 2b553e9..675659a 100644
  
      def __post_init__(self):
          self.rl_cameras = self.rl_camera.split("+")
-@@ -251,11 +271,11 @@ class Workspace:
+@@ -91,6 +114,17 @@ class MainConfig(common_utils.RunConfig):
+         else:
+             self.robots: list[str] = ["Panda"]
+ 
++        assert 0 < self.square_init_scale <= 1.0, (
++            f"square_init_scale must be in (0, 1], got {self.square_init_scale}"
++        )
++        assert self.num_eval_video_episode > 0, (
++            f"num_eval_video_episode must be positive, got {self.num_eval_video_episode}"
++        )
++        if self.task_name != "NutAssemblySquare":
++            assert self.square_init_scale == 1.0, (
++                "square_init_scale is only supported for NutAssemblySquare"
++            )
++
+     @property
+     def bc_cameras(self) -> list[str]:
+         if not self.bc_policy:
+@@ -195,6 +229,7 @@ class Workspace:
+             obs_stack=self.obs_stack,
+             state_stack=self.cfg.state_stack,
+             prop_stack=self.prop_stack,
++            square_init_scale=self.cfg.square_init_scale,
+             record_sim_state=bool(self.cfg.save_per_success > 0),
+         )
+         self.eval_env_params = dict(
+@@ -210,6 +245,7 @@ class Workspace:
+             obs_stack=self.obs_stack,
+             state_stack=self.cfg.state_stack,
+             prop_stack=self.prop_stack,
++            square_init_scale=self.cfg.square_init_scale,
+         )
+         self.eval_env = PixelRobosuite(**self.eval_env_params)  # type: ignore
+ 
+@@ -251,11 +287,11 @@ class Workspace:
              assert self.cfg.save_per_success <= 0, "cannot save a non-growing replay"
              self.replay.freeze_bc_replay = True
  
@@ -136,7 +661,7 @@ index 2b553e9..675659a 100644
                  env_params=self.eval_env_params,
                  agent=policy,
                  num_proc=10,
-@@ -264,7 +284,7 @@ class Workspace:
+@@ -264,7 +300,7 @@ class Workspace:
                  verbose=False,
              )
          else:
@@ -145,7 +670,7 @@ index 2b553e9..675659a 100644
                  env_params=self.eval_env_params,
                  agent=policy,
                  num_game=self.cfg.num_eval_episode,
-@@ -274,7 +294,7 @@ class Workspace:
+@@ -274,7 +310,7 @@ class Workspace:
              )
  
          np.random.set_state(random_state)
@@ -154,7 +679,7 @@ index 2b553e9..675659a 100644
  
      def warm_up(self):
          # warm up stage, fill the replay with some episodes
-@@ -320,7 +340,10 @@ class Workspace:
+@@ -320,7 +356,10 @@ class Workspace:
              wb_run_name=self.cfg.wb_run,
              wb_group_name=self.cfg.wb_group,
              config=self.cfg_dict,
@@ -165,7 +690,7 @@ index 2b553e9..675659a 100644
          self.agent.set_stats(stat)
          saver = common_utils.TopkSaver(save_dir=self.work_dir, topk=1)
  
-@@ -353,6 +376,10 @@ class Workspace:
+@@ -353,6 +392,10 @@ class Workspace:
                      stat["score/train_score"].append(float(success))
                      stat["data/episode_len"].append(self.train_env.time_step)
  
@@ -176,7 +701,7 @@ index 2b553e9..675659a 100644
                      # reset env
                      obs, _ = self.train_env.reset()
                      self.replay.new_episode(obs)
-@@ -388,8 +415,16 @@ class Workspace:
+@@ -388,8 +431,16 @@ class Workspace:
          with stopwatch.time("eval"):
              eval_seed = (self.global_step // self.cfg.log_per_step) * self.cfg.num_eval_episode
              stat["eval/seed"].append(eval_seed)
@@ -195,7 +720,7 @@ index 2b553e9..675659a 100644
  
              original_act_method = self.agent.cfg.act_method
              # if self.agent.cfg.act_method != "rl":
-@@ -400,12 +435,12 @@ class Workspace:
+@@ -400,18 +451,56 @@ class Workspace:
  
              if self.agent.cfg.act_method == "ibrl_soft":
                  with self.agent.override_act_method("ibrl"):
@@ -208,11 +733,55 @@ index 2b553e9..675659a 100644
              assert self.agent.cfg.act_method == original_act_method
  
 -        saved = saver.save(self.agent.state_dict(), eval_score, save_latest=True)
++        if self.cfg.use_wb and self.cfg.log_eval_video:
++            with stopwatch.time("eval_video"):
++                self.log_eval_video(eval_seed=eval_seed)
++
 +        saved = saver.save(self.agent.state_dict(), eval_result["success_rate"], save_latest=True)
          stat.summary(self.global_step, reset=True)
          print(f"saved?: {saved}")
          stopwatch.summary(reset=True)
-@@ -442,6 +477,8 @@ class Workspace:
+         print("total time:", common_utils.sec2str(stopwatch.total_time))
+         print(common_utils.get_mem_usage())
+ 
++    def log_eval_video(self, eval_seed: int) -> None:
++        video_dir = os.path.join(self.work_dir, "eval_videos")
++        os.makedirs(video_dir, exist_ok=True)
++        video_env_params = dict(self.eval_env_params)
++
++        # State-only runs may have no camera_names configured, which would make video recording fail.
++        if not video_env_params.get("camera_names"):
++            video_env_params["camera_names"] = ["agentview", "robot0_eye_in_hand"]
++
++        eval_video_result = run_eval(
++            env_params=video_env_params,
++            agent=self.agent,
++            num_game=self.cfg.num_eval_video_episode,
++            seed=eval_seed,
++            record_dir=video_dir,
++            verbose=False,
++            record_single_file=True,
++            record_file_name=f"eval_step_{self.global_step}",
++            record_num_episode=self.cfg.num_eval_video_episode,
++        )
++
++        video_path = eval_video_result.get("video_path")
++        assert video_path, "Eval video logging enabled but no video file was produced."
++        assert os.path.exists(video_path), f"Eval video path does not exist: {video_path}"
++
++        import wandb
++
++        wandb.log(
++            {
++                "eval/video": wandb.Video(video_path, fps=10, format="mp4"),
++            },
++            step=self.global_step,
++        )
++
+     def rl_train(self, stat: common_utils.MultiCounter):
+         stddev = utils.schedule(self.cfg.stddev_schedule, self.global_step)
+         for i in range(self.cfg.num_critic_update):
+@@ -442,6 +531,8 @@ class Workspace:
              wb_run_name=self.cfg.wb_run,
              wb_group_name=self.cfg.wb_group,
              config=self.cfg_dict,
@@ -221,3 +790,22 @@ index 2b553e9..675659a 100644
          )
          saver = common_utils.TopkSaver(save_dir=self.work_dir, topk=1)
  
+@@ -454,7 +545,8 @@ class Workspace:
+                     stat[k].append(v)
+ 
+             eval_seed = epoch * self.cfg.pretrain_epoch_len
+-            score = self.eval(eval_seed, policy=self.agent)
++            eval_result = self.eval(eval_seed, policy=self.agent)
++            score = eval_result["success_rate"]
+             stat["pretrain/score"].append(score)
+ 
+             stat.summary(epoch, reset=True)
+@@ -503,8 +595,6 @@ def main():
+     if cfg.use_wb:
+         wandb.finish()
+ 
+-    assert False
+-
+ 
+ if __name__ == "__main__":
+     import wandb
