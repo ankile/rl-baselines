@@ -22,7 +22,7 @@ export CMD="${COMMANDS[$SLURM_ARRAY_TASK_ID]}"
 echo "[$(date -Iseconds)] Running: $CMD"
 
 if command -v zsh >/dev/null 2>&1; then
-  zsh -lic 'micromamba run -n {{env_name}} bash -lc '\''cd "{{repo_cwd}}" && {{env_exports}} eval "$CMD"'\'''
+  zsh -lic 'micromamba run -n {{env_name}} bash -lc '\''export CPATH="$CONDA_PREFIX/include${CPATH:+:$CPATH}" LIBRARY_PATH="$CONDA_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}" && cd "{{repo_cwd}}" && {{env_exports}} eval "$CMD"'\'''
 else
   echo "zsh not found (required)" >&2
   exit 1

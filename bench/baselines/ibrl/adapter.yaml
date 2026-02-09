@@ -22,6 +22,8 @@ launch:
     --log_per_step {eval_interval}
   env:
     MUJOCO_GL: egl
+    WANDB_DIR: .
+    WANDB__SERVICE_WAIT: "120"
 
 wandb_mapping:
   project_arg: --wandb_project
