@@ -54,3 +54,5 @@ preflight_checks:
   required_files:
     - main.py
     - agents/qam.py
+    - envs/env_utils.py
+    - envs/robomimic_utils.py

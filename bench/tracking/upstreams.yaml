@@ -51,6 +51,10 @@ baselines:
     upstream_ref: origin/main
     upstream_commit: f93efd22520a79f6819f458dffe9c075eacc786f
     track_paths:
+      - envs/env_utils.py
+      - envs/robomimic_utils.py
+      - evaluation.py
+      - main.py
       - scripts/square_qam.sbatch
     patches:
       - bench/tracking/patches/qam/20260208_square_online_rl.patch

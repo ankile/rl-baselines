@@ -1,39 +1,622 @@
-From 88eeaf667c1f1a2793edc0dcd68792f9612008bc Mon Sep 17 00:00:00 2001
-From: ankile <lars.ankile@gmail.com>
-Date: Wed, 4 Feb 2026 21:18:15 -0800
-Subject: [PATCH 1/2] Add robomimic/robosuite Square task support
-
-- Add envs/robomimic_utils.py with environment creation and dataset loading
-- Update env_utils.py to detect and create robomimic environments
-- Add reward adjustment flag to shift robomimic rewards from [0,1] to [-1,0]
-- Add success_rate and success_length_mean metrics to evaluation.py
-- Add scripts/square_qam.sbatch with QAM paper hyperparameters
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
----
- scripts/square_qam.sbatch | 35 +++++++++++++++++++++++++++++++++++
- 1 file changed, 35 insertions(+)
- create mode 100644 scripts/square_qam.sbatch
-
+diff --git a/envs/env_utils.py b/envs/env_utils.py
+index 1544abb..966a816 100644
+--- a/envs/env_utils.py
++++ b/envs/env_utils.py
+@@ -125,6 +125,17 @@ def make_env_and_datasets(env_name, frame_stack=None, action_clip_eps=1e-5):
+         eval_env = d4rl_utils.make_env(env_name)
+         dataset = d4rl_utils.get_dataset(env, env_name)
+         train_dataset, val_dataset = dataset, None
++    elif env_name.startswith("lift") or env_name.startswith("can") or env_name.startswith("square") or \
++         env_name.startswith("transport") or env_name.startswith("tool_hang"):
++        # Robomimic/Robosuite
++        from envs import robomimic_utils
++
++        env = robomimic_utils.make_env(env_name, seed=0)
++        eval_env = robomimic_utils.make_env(env_name, seed=42, render_offscreen=True)
++        env = EpisodeMonitor(env)
++        eval_env = EpisodeMonitor(eval_env)
++        dataset = robomimic_utils.get_dataset(env, env_name)
++        train_dataset, val_dataset = dataset, None
+     else:
+         raise ValueError(f'Unsupported environment: {env_name}')
+ 
+diff --git a/envs/robomimic_utils.py b/envs/robomimic_utils.py
+new file mode 100644
+index 0000000..2fef374
+--- /dev/null
++++ b/envs/robomimic_utils.py
+@@ -0,0 +1,459 @@
++from os.path import expanduser
++import os
++
++import numpy as np
++import gymnasium as gym
++from gymnasium.spaces import Box
++import imageio
++import h5py
++
++import robomimic.utils.env_utils as EnvUtils
++import robomimic.utils.file_utils as FileUtils
++import robomimic.utils.env_utils as EnvUtils
++import robomimic.utils.obs_utils as ObsUtils
++from robomimic import DATASET_REGISTRY
++
++from utils.datasets import Dataset
++
++
++def is_robomimic_env(env_name):
++    """determine if an env is robomimic"""
++    if "low_dim" not in env_name:
++        return False
++    parts = env_name.split("-")
++    if len(parts) != 3:
++        return False
++    task, dataset_type, hdf5_type = parts
++    return task in ("lift", "can", "square", "transport", "tool_hang") and dataset_type in ("mh", "ph")
++
++
++# Single-arm observation keys
++low_dim_keys_single_arm = (
++    'robot0_eef_pos',
++    'robot0_eef_quat',
++    'robot0_gripper_qpos',
++    'object'
++)
++
++# Two-arm observation keys (for transport task)
++low_dim_keys_two_arm = (
++    'robot0_eef_pos',
++    'robot0_eef_quat',
++    'robot0_gripper_qpos',
++    'robot1_eef_pos',
++    'robot1_eef_quat',
++    'robot1_gripper_qpos',
++    'object'
++)
++
++low_dim_keys = {"low_dim": low_dim_keys_single_arm}
++ObsUtils.initialize_obs_modality_mapping_from_dict(low_dim_keys)
++
++
++def _get_low_dim_keys(env_name):
++    """Get the appropriate low_dim keys based on the task."""
++    if env_name.startswith("transport"):
++        return low_dim_keys_two_arm
++    return low_dim_keys_single_arm
++
++
++def _get_max_episode_length(env_name):
++    if env_name.startswith("lift"):
++        return 300
++    elif env_name.startswith("can"):
++        return 300
++    elif env_name.startswith("square"):
++        return 400
++    elif env_name.startswith("transport"):
++        return 800
++    elif env_name.startswith("tool_hang"):
++        return 1000
++    else:
++        raise ValueError(f"Unsupported environment: {env_name}")
++
++
++def make_env(env_name, seed=0, require_dataset=True, render_offscreen=False):
++    """
++    Create a robomimic environment.
++
++    Args:
++        env_name: Environment name like "square-mh-low_dim"
++        seed: Random seed
++        require_dataset: If True, requires the dataset to exist (for metadata).
++                        If False, uses hardcoded metadata (for SIR evaluation).
++        render_offscreen: If True, enable offscreen rendering for video recording.
++    """
++    max_episode_length = _get_max_episode_length(env_name)
++
++    if require_dataset:
++        dataset_path = _check_dataset_exists(env_name)
++        env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path)
++    else:
++        # Hardcoded metadata for creating env without dataset
++        # Used for SIR experiments where we only need the env for evaluation
++        env_meta = _get_hardcoded_env_meta(env_name)
++
++    # Filter out unsupported env_kwargs for older robosuite versions
++    # lite_physics was added in robosuite 1.5.x
++    if "env_kwargs" in env_meta:
++        unsupported_keys = ["lite_physics"]
++        for key in unsupported_keys:
++            if key in env_meta["env_kwargs"]:
++                del env_meta["env_kwargs"][key]
++
++        # Fix controller_configs for robosuite 1.4.x compatibility
++        # Newer robosuite 1.5.x uses "BASIC" type with "body_parts" structure
++        # which is incompatible with older versions
++        if "controller_configs" in env_meta["env_kwargs"]:
++            ctrl_cfg = env_meta["env_kwargs"]["controller_configs"]
++            if isinstance(ctrl_cfg, dict) and ctrl_cfg.get("type") == "BASIC":
++                # Replace with OSC_POSE controller config for compatibility
++                # Single config dict works for both single-arm and multi-arm envs
++                # (robosuite replicates it automatically for each arm)
++                env_meta["env_kwargs"]["controller_configs"] = {
++                    "type": "OSC_POSE",
++                    "input_max": 1,
++                    "input_min": -1,
++                    "output_max": [0.05, 0.05, 0.05, 0.5, 0.5, 0.5],
++                    "output_min": [-0.05, -0.05, -0.05, -0.5, -0.5, -0.5],
++                    "kp": 150,
++                    "damping": 1,
++                    "impedance_mode": "fixed",
++                    "kp_limits": [0, 300],
++                    "damping_limits": [0, 10],
++                    "position_limits": None,
++                    "orientation_limits": None,
++                    "uncouple_pos_ori": True,
++                    "control_delta": True,
++                    "interpolation": None,
++                    "ramp_ratio": 0.2,
++                }
++
++    env = EnvUtils.create_env_from_metadata(
++        env_meta=env_meta,
++        render=False,
++        render_offscreen=render_offscreen,
++    )
++    obs_keys = _get_low_dim_keys(env_name)
++    env = RobomimicLowdimWrapper(env, low_dim_keys=obs_keys, max_episode_length=max_episode_length)
++    env.seed(seed)
++
++    return env
++
++
++def _get_hardcoded_env_meta(env_name):
++    """Get hardcoded environment metadata for creating envs without dataset."""
++    task = env_name.split("-")[0]
++
++    # Mapping from task name to robosuite environment name
++    task_to_env = {
++        "lift": "Lift",
++        "can": "PickPlaceCan",
++        "square": "NutAssemblySquare",
++        "transport": "TwoArmTransport",
++        "tool_hang": "ToolHang",
++    }
++
++    if task not in task_to_env:
++        raise ValueError(f"No hardcoded metadata for task: {task}")
++
++    # Base controller config for single-arm tasks
++    base_controller_config = {
++        "type": "OSC_POSE",
++        "input_max": 1,
++        "input_min": -1,
++        "output_max": [0.05, 0.05, 0.05, 0.5, 0.5, 0.5],
++        "output_min": [-0.05, -0.05, -0.05, -0.5, -0.5, -0.5],
++        "kp": 150,
++        "damping": 1,
++        "impedance_mode": "fixed",
++        "kp_limits": [0, 300],
++        "damping_limits": [0, 10],
++        "position_limits": None,
++        "orientation_limits": None,
++        "uncouple_pos_ori": True,
++        "control_delta": True,
++        "interpolation": None,
++        "ramp_ratio": 0.2,
++    }
++
++    # Transport task requires two-arm configuration
++    if task == "transport":
++        return {
++            "env_name": task_to_env[task],
++            "type": 1,
++            "env_kwargs": {
++                "has_renderer": False,
++                "has_offscreen_renderer": False,
++                "ignore_done": True,
++                "use_object_obs": True,
++                "use_camera_obs": False,
++                "control_freq": 20,
++                "controller_configs": base_controller_config,  # Single config replicated for both arms
++                "robots": ["Panda", "Panda"],
++                "env_configuration": "single-arm-opposed",
++                "reward_shaping": False,
++            }
++        }
++
++    # Single-arm tasks
++    return {
++        "env_name": task_to_env[task],
++        "type": 1,  # robosuite environment type
++        "env_kwargs": {
++            "has_renderer": False,
++            "has_offscreen_renderer": False,
++            "ignore_done": True,
++            "use_object_obs": True,
++            "use_camera_obs": False,
++            "control_freq": 20,
++            "controller_configs": base_controller_config,
++            "robots": ["Panda"],
++            "reward_shaping": False,
++        }
++    }
++
++def _check_dataset_exists(env_name):
++    # enforce that the dataset exists
++    task, dataset_type, hdf5_type = env_name.split("-")
++    if dataset_type == "mg":
++        file_name = "low_dim_sparse_v141.hdf5"
++    else:
++        file_name = "low_dim_v141.hdf5"
++    download_folder = os.path.join(
++        expanduser("~/.robomimic"),
++        task,
++        dataset_type,
++        file_name
++    )
++    assert os.path.exists(download_folder)
++
++    return download_folder
++
++def get_dataset(env, env_name):
++    dataset_path = _check_dataset_exists(env_name)
++
++    rm_dataset = h5py.File(dataset_path, "r")
++    demos = list(rm_dataset["data"].keys())
++    num_demos = len(demos)
++    inds = np.argsort([int(elem[5:]) for elem in demos])
++    demos = [demos[i] for i in inds]
++
++    num_timesteps = 0
++    for ep in demos:
++        num_timesteps += int(rm_dataset[f"data/{ep}/actions"].shape[0])
++
++    print(f"the size of the dataset is {num_timesteps}")
++    example_action = env.action_space.sample()
++
++    # data holder
++    observations = []
++    actions = []
++    next_observations = []
++    terminals = []
++    rewards = []
++    masks = []
++
++    # Get task-specific observation keys
++    obs_keys = _get_low_dim_keys(env_name)
++
++    # go through and add to the data holder
++    for ep in demos:
++        a = np.array(rm_dataset["data/{}/actions".format(ep)])
++        obs, next_obs = [], []
++        for k in obs_keys:
++            obs.append(np.array(rm_dataset[f"data/{ep}/obs/{k}"]))
++        for k in obs_keys:
++            next_obs.append(np.array(rm_dataset[f"data/{ep}/next_obs/{k}"]))
++        obs = np.concatenate(obs, axis=-1)
++        next_obs = np.concatenate(next_obs, axis=-1)
++        dones = np.array(rm_dataset["data/{}/dones".format(ep)])
++        r = np.array(rm_dataset["data/{}/rewards".format(ep)])
++
++        observations.append(obs.astype(np.float32))
++        actions.append(a.astype(np.float32))
++        rewards.append(r.astype(np.float32))
++        terminals.append(dones.astype(np.float32))
++        masks.append(1.0 - dones.astype(np.float32))
++        next_observations.append(next_obs.astype(np.float32))
++
++    return Dataset.create(
++        observations=np.concatenate(observations, axis=0),
++        actions=np.concatenate(actions, axis=0),
++        rewards=np.concatenate(rewards, axis=0),
++        terminals=np.concatenate(terminals, axis=0),
++        masks=np.concatenate(masks, axis=0),
++        next_observations=np.concatenate(next_observations, axis=0),
++    )
++
++
++class RobomimicLowdimWrapper(gym.Env):
++    """
++    Environment wrapper for Robomimic environments with state observations.
++    Modified from https://github.com/real-stanford/diffusion_policy/blob/main/diffusion_policy/env/robomimic/robomimic_lowdim_wrapper.py
++    """
++    def __init__(
++        self,
++        env,
++        normalization_path=None,
++        low_dim_keys=[
++            "robot0_eef_pos",
++            "robot0_eef_quat",
++            "robot0_gripper_qpos",
++            "object",
++        ],
++        clamp_obs=False,
++        init_state=None,
++        render_hw=(256, 256),
++        render_camera_name="agentview",
++        max_episode_length=None,
++    ):
++        self.env = env
++        self.obs_keys = low_dim_keys
++        self.init_state = init_state
++        self.render_hw = render_hw
++        self.render_camera_name = render_camera_name
++        self.video_writer = None
++        self.clamp_obs = clamp_obs
++        self.max_episode_length = max_episode_length
++        self.env_step = 0
++        self.n_episodes = 0
++
++        # set up normalization
++        self.normalize = normalization_path is not None
++        if self.normalize:
++            normalization = np.load(normalization_path)
++            self.obs_min = normalization["obs_min"]
++            self.obs_max = normalization["obs_max"]
++            self.action_min = normalization["action_min"]
++            self.action_max = normalization["action_max"]
++
++        # setup spaces - use [-1, 1]
++        low = np.full(env.action_dimension, fill_value=-1.)
++        high = np.full(env.action_dimension, fill_value=1.)
++        self.action_space = Box(
++            low=low,
++            high=high,
++            shape=low.shape,
++            dtype=low.dtype,
++        )
++        obs_example = self.get_observation()
++        low = np.full_like(obs_example, fill_value=-1)
++        high = np.full_like(obs_example, fill_value=1)
++        self.observation_space = Box(
++            low=low,
++            high=high,
++            shape=low.shape,
++            dtype=low.dtype,
++        )
++
++    def normalize_obs(self, obs):
++        obs = 2 * (
++            (obs - self.obs_min) / (self.obs_max - self.obs_min + 1e-6) - 0.5
++        )  # -> [-1, 1]
++        if self.clamp_obs:
++            obs = np.clip(obs, -1, 1)
++        return obs
++
++    def unnormalize_action(self, action):
++        action = (action + 1) / 2  # [-1, 1] -> [0, 1]
++        return action * (self.action_max - self.action_min) + self.action_min
++
++    def get_observation(self):
++        raw_obs = self.env.get_observation()
++        raw_obs = np.concatenate([raw_obs[key] for key in self.obs_keys], axis=0)
++        if self.normalize:
++            return self.normalize_obs(raw_obs)
++        return raw_obs
++
++    def seed(self, seed=None):
++        if seed is not None:
++            np.random.seed(seed=seed)
++        else:
++            np.random.seed()
++
++    def reset(self, options={}, **kwargs):
++        """Ignore passed-in arguments like seed"""
++
++        self.t = 0
++        self.episode_return, self.episode_length = 0, 0
++        self.n_episodes += 1
++        # Close video if exists
++        if self.video_writer is not None:
++            self.video_writer.close()
++            self.video_writer = None
++
++        # Start video if specified
++        if "video_path" in options:
++            self.video_writer = imageio.get_writer(options["video_path"], fps=30)
++
++        # Call reset
++        new_seed = options.get(
++            "seed", None
++        )  # used to set all environments to specified seeds
++        if self.init_state is not None:
++            # always reset to the same state to be compatible with gym
++            self.env.reset_to({"states": self.init_state})
++        elif new_seed is not None:
++            self.seed(seed=new_seed)
++            self.env.reset()
++        else:
++            # random reset
++            self.env.reset()
++
++        return self.get_observation(), {}
++
++    def step(self, action):
++        if self.normalize:
++            action = self.unnormalize_action(action)
++        raw_obs, reward, done, info = self.env.step(action)
++        raw_obs = np.concatenate([raw_obs[key] for key in self.obs_keys], axis=0)
++        if self.normalize:
++            obs = self.normalize_obs(raw_obs)
++        else:
++            obs = raw_obs
++
++        # render if specified
++        if self.video_writer is not None:
++            video_img = self.render(mode="rgb_array")
++            self.video_writer.append_data(video_img)
++
++        self.t += 1
++        self.env_step += 1
++        self.episode_return += reward
++        self.episode_length += 1
++
++        # print(obs, reward, done, info)
++        if reward > 0.:
++            done = True
++            info["success"] = 1
++        else:
++            info["success"] = 0
++
++        if done:
++            return obs, reward, True, False, info
++        if self.t >= self.max_episode_length:
++            return obs, reward, False, True, info
++        return obs, reward, False, False, info
++
++    def render(self, mode="rgb_array"):
++        h, w = self.render_hw
++        return self.env.render(
++            mode=mode,
++            height=h,
++            width=w,
++            camera_name=self.render_camera_name,
++        )
++
++    def get_episode_info(self):
++        return {"return": self.episode_return, "length": self.episode_length}
++    def get_info(self):
++        return {"env_step": self.env_step, "n_episodes": self.n_episodes}
++
++
++if __name__ == "__main__":
++    # for testing
++    env = make_env("lift-mh-low_dim")
++    dataset = get_dataset(env, "lift-mh-low_dim")
++    print(dataset)
++    # transport-mh-low_dim
+diff --git a/evaluation.py b/evaluation.py
+index 38d3caa..9f8f317 100644
+--- a/evaluation.py
++++ b/evaluation.py
+@@ -64,6 +64,8 @@ def evaluate(
+     actor_fn = supply_rng(partial(agent.sample_actions, **extra_sample_kwargs), rng=jax.random.PRNGKey(np.random.randint(0, 2**32)))
+     trajs = []
+     stats = defaultdict(list)
++    successes = []
++    success_lengths = []
+ 
+     renders = []
+     for i in trange(num_eval_episodes + num_video_episodes):
+@@ -150,9 +152,21 @@ def evaluate(
+         if i < num_eval_episodes:
+             add_to(stats, flatten(info))
+             trajs.append(traj)
++            # Add episode length and return metrics
++            add_to(stats, {'length': step, 'return': np.sum(traj['reward'])})
++            # Track success for robomimic environments
++            if 'success' in info:
++                successes.append(info['success'])
++                if info['success'] > 0:
++                    success_lengths.append(step)
+         else:
+             renders.append(np.array(render))
+ 
++    # Add success metrics
++    if successes:
++        stats['success_rate'] = [np.mean(successes)]
++        stats['success_length_mean'] = [np.mean(success_lengths) if success_lengths else 0.0]
++
+     for k, v in stats.items():
+         stats[k] = np.mean(v)
+ 
+diff --git a/main.py b/main.py
+index c95f3e9..266dd64 100644
+--- a/main.py
++++ b/main.py
+@@ -5,6 +5,7 @@ from log_utils import setup_wandb, get_exp_name, get_flag_dict, CsvLogger
+ 
+ from envs.env_utils import make_env_and_datasets
+ from envs.ogbench_utils import make_ogbench_env_and_datasets
++from envs.robomimic_utils import is_robomimic_env
+ 
+ from utils.flax_utils import save_agent, restore_agent
+ from utils.datasets import Dataset, ReplayBuffer
+@@ -16,6 +17,7 @@ import numpy as np
+ FLAGS = flags.FLAGS
+ 
+ flags.DEFINE_string('run_group', 'Debug', 'Run group.')
++flags.DEFINE_string('wandb_project', 'qam-reproduce', 'Wandb project name.')
+ flags.DEFINE_string('tags', 'Default', 'Wandb tag.')
+ flags.DEFINE_integer('seed', 0, 'Random seed.')
+ flags.DEFINE_string('env_name', 'cube-triple-play-singletask-task2-v0', 'Environment (dataset) name.')
+@@ -48,6 +50,8 @@ flags.DEFINE_bool('auto_cleanup', True, "remove all intermediate checkpoints whe
+ 
+ flags.DEFINE_bool('balanced_sampling', False, "sample half offline and online replay buffer")
+ 
++flags.DEFINE_bool('adjust_robomimic_reward', True, "Adjust robomimic reward from [0,1] to [-1,0]")
++
+ def save_csv_loggers(csv_loggers, save_dir):
+     for prefix, csv_logger in csv_loggers.items():
+         csv_logger.save(os.path.join(save_dir, f"{prefix}_sv.csv"))
+@@ -67,11 +71,17 @@ class LoggingHelper:
+     def log(self, data, prefix, step):
+         assert prefix in self.csv_loggers, prefix
+         self.csv_loggers[prefix].log(data, step=step)
+-        self.wandb_logger.log({f'{prefix}/{k}': v for k, v in data.items()}, step=step)
++
++        # Map to standardized prefix for wandb
++        wandb_prefix = 'train' if prefix in ['offline_agent', 'online_agent'] else prefix
++
++        # Flatten nested keys (e.g., critic/loss -> critic_loss)
++        flat_data = {f'{wandb_prefix}/{k.replace("/", "_")}': v for k, v in data.items()}
++        self.wandb_logger.log(flat_data, step=step)
+ 
+ def main(_):
+     exp_name = get_exp_name(FLAGS)
+-    run = setup_wandb(project='qam-reproduce', group=FLAGS.run_group, name=exp_name, tags=FLAGS.tags.split(","))
++    run = setup_wandb(project=FLAGS.wandb_project, group=FLAGS.run_group, name=exp_name, tags=FLAGS.tags.split(","))
+     FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, FLAGS.run_group, FLAGS.env_name, exp_name)
+     
+     # data loading
+@@ -131,6 +141,13 @@ def main(_):
+             ds_dict["rewards"] = sparse_rewards
+             ds = Dataset.create(**ds_dict)
+ 
++        # Adjust robomimic rewards from [0,1] to [-1,0]
++        if is_robomimic_env(FLAGS.env_name) and FLAGS.adjust_robomimic_reward:
++            adjusted_rewards = ds["rewards"] - 1.0
++            ds_dict = {k: v for k, v in ds.items()}
++            ds_dict["rewards"] = adjusted_rewards
++            ds = Dataset.create(**ds_dict)
++
+         return ds
+     
+     train_dataset = process_train_dataset(train_dataset)
+@@ -321,6 +338,10 @@ def main(_):
+             assert int_reward <= 0.0
+             int_reward = (int_reward != 0.0) * -1.0
+ 
++        # Adjust robomimic rewards from [0,1] to [-1,0]
++        if is_robomimic_env(FLAGS.env_name) and FLAGS.adjust_robomimic_reward:
++            int_reward = int_reward - 1.0
++
+         transition = dict(
+             observations=ob,
+             actions=action,
 diff --git a/scripts/square_qam.sbatch b/scripts/square_qam.sbatch
 new file mode 100644
-index 0000000..69cdf2f
+index 0000000..766a42e
 --- /dev/null
 +++ b/scripts/square_qam.sbatch
 @@ -0,0 +1,35 @@
 +#!/bin/bash
-+#SBATCH --partition=iris
-+#SBATCH --time=4-00:00:00
++#SBATCH --time=1-00:00:00
 +#SBATCH --cpus-per-task=12
 +#SBATCH --mem=128G
 +#SBATCH --gres=gpu:1
++#SBATCH --output=logs/square_online_rl_%j.out
++#SBATCH --job-name=qam-square
 +
-+source ~/.bashrc
++# Activate environment
++eval "$(micromamba shell hook --shell bash)"
 +micromamba activate qam
++
 +cd /iris/u/ankile/self-improving-robots-workspace/qam
 +
 +MUJOCO_GL=egl python main.py \
 +    --run_group=qam-square \
++    --wandb_project=square-online-rl-saturation \
 +    --agent=agents/qam.py \
 +    --tags=QAM \
 +    --seed=${SLURM_ARRAY_TASK_ID:-10001} \
@@ -49,101 +632,6 @@ index 0000000..69cdf2f
 +    --save_interval=100000 \
 +    --agent.num_qs=10 \
 +    --agent.discount=0.99 \
-+    --agent.actor_hidden_dims='"(512, 512, 512, 512)"' \
-+    --agent.value_hidden_dims='"(512, 512, 512, 512)"' \
 +    --agent.batch_size=256 \
 +    --agent.rho=0.5 \
-+    --agent.inv_temp=1.0 \
-+    --agent.fql_alpha=0.0 \
-+    --agent.edit_scale=0.0
--- 
-2.43.0
-
-
-From fe3edf756ea5116bc717815bb422add8582d5900 Mon Sep 17 00:00:00 2001
-From: ankile <lars.ankile@gmail.com>
-Date: Thu, 5 Feb 2026 12:21:22 -0800
-Subject: [PATCH 2/2] Add wandb_project flag for configurable project name
-
-- Add --wandb_project flag to main.py (defaults to 'qam-reproduce')
-- Update setup_wandb() to use FLAGS.wandb_project instead of hardcoded value
-- Update square_qam.sbatch to use square-online-rl-saturation project
-- Simplify sbatch script settings
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
----
- scripts/square_qam.sbatch | 16 ++++++++--------
- 1 file changed, 8 insertions(+), 8 deletions(-)
-
-diff --git a/scripts/square_qam.sbatch b/scripts/square_qam.sbatch
-index 69cdf2f..766a42e 100644
---- a/scripts/square_qam.sbatch
-+++ b/scripts/square_qam.sbatch
-@@ -1,16 +1,20 @@
- #!/bin/bash
--#SBATCH --partition=iris
--#SBATCH --time=4-00:00:00
-+#SBATCH --time=1-00:00:00
- #SBATCH --cpus-per-task=12
- #SBATCH --mem=128G
- #SBATCH --gres=gpu:1
-+#SBATCH --output=logs/square_online_rl_%j.out
-+#SBATCH --job-name=qam-square
- 
--source ~/.bashrc
-+# Activate environment
-+eval "$(micromamba shell hook --shell bash)"
- micromamba activate qam
-+
- cd /iris/u/ankile/self-improving-robots-workspace/qam
- 
- MUJOCO_GL=egl python main.py \
-     --run_group=qam-square \
-+    --wandb_project=square-online-rl-saturation \
-     --agent=agents/qam.py \
-     --tags=QAM \
-     --seed=${SLURM_ARRAY_TASK_ID:-10001} \
-@@ -26,10 +30,6 @@ MUJOCO_GL=egl python main.py \
-     --save_interval=100000 \
-     --agent.num_qs=10 \
-     --agent.discount=0.99 \
--    --agent.actor_hidden_dims='"(512, 512, 512, 512)"' \
--    --agent.value_hidden_dims='"(512, 512, 512, 512)"' \
-     --agent.batch_size=256 \
-     --agent.rho=0.5 \
--    --agent.inv_temp=1.0 \
--    --agent.fql_alpha=0.0 \
--    --agent.edit_scale=0.0
 +    --agent.inv_temp=1.0
--- 
-2.43.0
-diff --git a/scripts/square_qam.sbatch b/scripts/square_qam.sbatch
-index 766a42e..9104e63 100644
---- a/scripts/square_qam.sbatch
-+++ b/scripts/square_qam.sbatch
-@@ -1,5 +1,5 @@
- #!/bin/bash
--#SBATCH --time=1-00:00:00
-+#SBATCH --time=1-00:00
- #SBATCH --cpus-per-task=12
- #SBATCH --mem=128G
- #SBATCH --gres=gpu:1
-diff --git a/main.py b/main.py
-index c95f3e9..983c5d8 100644
---- a/main.py
-+++ b/main.py
-@@ -16,6 +16,7 @@ import numpy as np
- FLAGS = flags.FLAGS
-
- flags.DEFINE_string('run_group', 'Debug', 'Run group.')
-+flags.DEFINE_string('wandb_project', 'qam-reproduce', 'Wandb project name.')
- flags.DEFINE_string('tags', 'Default', 'Wandb tag.')
- flags.DEFINE_integer('seed', 0, 'Random seed.')
- flags.DEFINE_string('env_name', 'cube-triple-play-singletask-task2-v0', 'Environment (dataset) name.')
-@@ -71,7 +72,7 @@ class LoggingHelper:
-
- def main(_):
-     exp_name = get_exp_name(FLAGS)
--    run = setup_wandb(project='qam-reproduce', group=FLAGS.run_group, name=exp_name, tags=FLAGS.tags.split(","))
-+    run = setup_wandb(project=FLAGS.wandb_project, group=FLAGS.run_group, name=exp_name, tags=FLAGS.tags.split(","))
-     FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, FLAGS.run_group, FLAGS.env_name, exp_name)
