@@ -9,34 +9,21 @@
 
 set -euo pipefail
 
-ROOT="${SLURM_SUBMIT_DIR:-$PWD}"
-if [ ! -f "${ROOT}/benchctl" ]; then
-  echo "ERROR: Launch this script from the rl-baselines repository root." >&2
-  exit 1
-fi
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+mkdir -p logs
 
 SEEDS=(42 43 44)
 SEED="${SEEDS[$SLURM_ARRAY_TASK_ID]}"
 
-mkdir -p "${ROOT}/logs"
-
-if [ -d "${ROOT}/third_party/EXPO" ]; then
-  EXPO_DIR="${ROOT}/third_party/EXPO"
-else
-  echo "ERROR: Missing '${ROOT}/third_party/EXPO'. Run './benchctl bootstrap --baseline expo' from '${ROOT}'." >&2
-  exit 1
-fi
-
-micromamba run -n expo bash -lc "
-set -euo pipefail
-cd '${EXPO_DIR}'
+cd third_party/EXPO
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export D4RL_SUPPRESS_IMPORT_ERROR=1
 export WANDB_DIR=.
 export WANDB__SERVICE_WAIT=120
+
 python train_robo.py \
   --env_name=square \
-  --seed=${SEED} \
+  --seed="${SEED}" \
   --dataset_dir=ph \
   --utd_ratio=20 \
   --start_training=0 \
@@ -55,4 +42,3 @@ python train_robo.py \
   --config.edit_action_scale=0.1 \
   --project_name=square-online-rl-saturation \
   --wandb_entity=ankile
-"

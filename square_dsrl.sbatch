@@ -9,36 +9,22 @@
 
 set -euo pipefail
 
-ROOT="${SLURM_SUBMIT_DIR:-$PWD}"
-if [ ! -f "${ROOT}/benchctl" ]; then
-  echo "ERROR: Launch this script from the rl-baselines repository root." >&2
-  exit 1
-fi
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+mkdir -p logs
 
 SEEDS=(42 43 44)
 SEED="${SEEDS[$SLURM_ARRAY_TASK_ID]}"
 
-mkdir -p "${ROOT}/logs"
-
-if [ -d "${ROOT}/third_party/dsrl" ]; then
-  DSRL_DIR="${ROOT}/third_party/dsrl"
-else
-  echo "ERROR: Missing '${ROOT}/third_party/dsrl'. Run './benchctl bootstrap --baseline dsrl' from '${ROOT}'." >&2
-  exit 1
-fi
-
-micromamba run -n dsrl bash -lc "
-set -euo pipefail
-cd '${DSRL_DIR}'
+cd third_party/dsrl
 export MUJOCO_GL=egl
 export WANDB_DIR=.
 export WANDB__SERVICE_WAIT=120
+
 python train_dsrl.py \
   --config-path=cfg/robomimic \
   --config-name=dsrl_square_comparison.yaml \
-  seed=${SEED} \
+  seed="${SEED}" \
   total_timesteps=10000000 \
   eval_interval=100000 \
   num_evals=100 \
   wandb.project=square-online-rl-saturation
-"

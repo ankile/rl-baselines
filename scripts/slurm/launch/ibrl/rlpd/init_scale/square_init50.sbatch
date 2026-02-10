@@ -9,33 +9,27 @@
 
 set -euo pipefail
 
-ROOT="${SLURM_SUBMIT_DIR:-$PWD}"
-if [ ! -f "${ROOT}/benchctl" ]; then
-  echo "ERROR: Launch this script from the rl-baselines repository root." >&2
-  exit 1
-fi
-
-mkdir -p "${ROOT}/logs"
-
-if [ -d "${ROOT}/third_party/ibrl" ]; then
-  IBRL_DIR="${ROOT}/third_party/ibrl"
-else
-  echo "ERROR: Missing '${ROOT}/third_party/ibrl'. Run './benchctl bootstrap --baseline ibrl' from '${ROOT}'." >&2
-  exit 1
-fi
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+mkdir -p logs
 
 SEEDS=(1 2 3 4 5)
 SEED="${SEEDS[$SLURM_ARRAY_TASK_ID]}"
 SCALE=0.5
 
-micromamba run -n ibrl bash -lc "
-set -euo pipefail
-cd '${IBRL_DIR}'
+cd third_party/ibrl
 export MUJOCO_GL=egl
+export WANDB_DIR=.
+export WANDB__SERVICE_WAIT=120
+
 python train_rl.py \
-  --config_path release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml \
-  --seed ${SEED} \
-  --square_init_scale ${SCALE} \
+  --config_path release/cfgs/robomimic_rl/square_state_rlpd.yaml \
+  --seed="${SEED}" \
+  --square_init_scale "${SCALE}" \
+  --run_name_method rlpd \
   --wandb_project rlpd-square-initscale \
+  --wandb_entity ankile \
+  --num_train_step 10000000 \
+  --num_eval_episode 100 \
+  --log_eval_video 1 \
+  --num_eval_video_episode 10 \
   --log_per_step 25000
-"

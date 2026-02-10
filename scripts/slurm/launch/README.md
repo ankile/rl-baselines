@@ -4,7 +4,8 @@ These scripts are the canonical, checked-in job launch entrypoints.
 
 Assumptions:
 - Run `sbatch` from the `rl-baselines` repository root.
-- Required `third_party/<baseline>` source trees and micromamba envs already exist.
+- Activate the correct environment before launch.
+- Required `third_party/<baseline>` source trees and data already exist.
 
 Layout:
 - `expo/reproduce/`: EXPO square online RL scripts.

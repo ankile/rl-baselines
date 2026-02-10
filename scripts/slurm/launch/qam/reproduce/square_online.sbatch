@@ -9,43 +9,25 @@
 
 set -euo pipefail
 
-ROOT="${SLURM_SUBMIT_DIR:-$PWD}"
-if [ ! -f "${ROOT}/benchctl" ]; then
-  echo "ERROR: Launch this script from the rl-baselines repository root." >&2
-  exit 1
-fi
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+mkdir -p logs
+mkdir -p logs/.numba_cache
 
 SEEDS=(42 43 44)
 SEED="${SEEDS[$SLURM_ARRAY_TASK_ID]}"
 
-mkdir -p "${ROOT}/logs"
-
-if [ -d "${ROOT}/third_party/qam" ]; then
-  QAM_DIR="${ROOT}/third_party/qam"
-else
-  echo "ERROR: Missing '${ROOT}/third_party/qam'. Run './benchctl bootstrap --baseline qam' from '${ROOT}'." >&2
-  exit 1
-fi
-mkdir -p "${QAM_DIR}/.numba_cache"
-
-micromamba run -n qam bash -lc "
-set -euo pipefail
-cd '${QAM_DIR}'
+cd third_party/qam
 export MUJOCO_GL=egl
 export WANDB_DIR=.
 export WANDB__SERVICE_WAIT=120
-export NUMBA_CACHE_DIR='${ROOT}/third_party/qam/.numba_cache'
-export CPATH=\"\$CONDA_PREFIX/include\${CPATH:+:\$CPATH}\"
-export LIBRARY_PATH=\"\$CONDA_PREFIX/lib\${LIBRARY_PATH:+:\$LIBRARY_PATH}\"
-for d in \"\$CONDA_PREFIX\"/lib/python*/site-packages/nvidia/*/lib; do
-  [ -d \"\$d\" ] && export LD_LIBRARY_PATH=\"\$d\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\"
-done
+export NUMBA_CACHE_DIR="${SLURM_SUBMIT_DIR:-$PWD}/logs/.numba_cache"
+
 python main.py \
   --run_group=qam-square \
   --wandb_project=square-online-rl-saturation \
   --agent=agents/qam.py \
   --tags=QAM \
-  --seed=${SEED} \
+  --seed="${SEED}" \
   --env_name=square-mh-low_dim \
   --horizon_length=5 \
   --agent.action_chunking=True \
@@ -61,4 +43,3 @@ python main.py \
   --agent.batch_size=256 \
   --agent.rho=0.5 \
   --agent.inv_temp=1.0
-"
