@@ -4,7 +4,7 @@ Unified harness for running and comparing RL baselines (`EXPO`, `ibrl`, `dsrl`, 
 
 - One canonical experiment spec.
 - Baseline adapters for command/env/task differences.
-- Shared SLURM rendering/launch flow.
+- Checked-in SLURM launch scripts (no generated submission layer).
 - Upstream pinning + patch-based local delta tracking.
 
 ## Operating Policy (Project-Specific)
@@ -101,22 +101,14 @@ cd rl-baselines
 ./benchctl validate --experiment bench/experiments/square_online_rl.yaml
 ```
 
-7. Render generated sbatch files:
+7. Submit jobs from checked-in scripts:
 
 ```bash
-./benchctl render --experiment bench/experiments/square_online_rl.yaml
-```
-
-8. Verify launch commands (no submit):
-
-```bash
-./benchctl launch --experiment bench/experiments/square_online_rl.yaml --dry-run
-```
-
-9. Submit jobs:
-
-```bash
-./benchctl launch --experiment bench/experiments/square_online_rl.yaml
+sbatch scripts/slurm/launch/expo/reproduce/square_online.sbatch
+sbatch scripts/slurm/launch/qam/reproduce/square_online.sbatch
+sbatch scripts/slurm/launch/dsrl/reproduce/square_online.sbatch
+sbatch scripts/slurm/launch/ibrl/ibrl/reproduce/square_online.sbatch
+sbatch scripts/slurm/launch/ibrl/rlpd/reproduce/square_online.sbatch
 ```
 
 ## Tracking Workflow
@@ -138,12 +130,6 @@ Check pin/diff/patch state:
 
 ## Common Commands
 
-Render just one baseline:
-
-```bash
-./benchctl render --experiment bench/experiments/square_online_rl.yaml --baseline expo --show
-```
-
 Bootstrap one baseline only:
 
 ```bash
@@ -158,17 +144,27 @@ Regenerate env lock metadata:
 
 ## Direct Sbatch Scripts
 
-If you prefer direct, editable sbatch files (no render/launch wrapper), use these root-level scripts:
+Canonical launch scripts are checked in under `scripts/slurm/launch/` and organized by baseline and experiment type:
 
 ```bash
-sbatch square_expo.sbatch
-sbatch square_qam.sbatch
-sbatch square_dsrl.sbatch
-sbatch square_ibrl.sbatch
-sbatch square_rlpd.sbatch
+scripts/slurm/launch/expo/reproduce/square_online.sbatch
+scripts/slurm/launch/qam/reproduce/square_online.sbatch
+scripts/slurm/launch/dsrl/reproduce/square_online.sbatch
+scripts/slurm/launch/ibrl/ibrl/reproduce/square_online.sbatch
+scripts/slurm/launch/ibrl/rlpd/reproduce/square_online.sbatch
+scripts/slurm/launch/ibrl/rlpd/init_scale/square_init10.sbatch
+scripts/slurm/launch/ibrl/rlpd/init_scale/square_init50.sbatch
+scripts/slurm/launch/ibrl/rlpd/init_scale/square_init80.sbatch
+scripts/slurm/launch/ibrl/rlpd/init_scale/square_init100.sbatch
 ```
 
-Each script uses seeds `[42, 43, 44]` via `#SBATCH --array=0-2` and runs from `third_party/<baseline>`.
+Example usage:
+
+```bash
+sbatch scripts/slurm/launch/ibrl/rlpd/init_scale/square_init10.sbatch
+```
+
+Compatibility root-level scripts (`square_*.sbatch`) are still available.
 
 ## GitHub Setup
 
@@ -195,6 +191,7 @@ gh auth login -h github.com
 - `bench/experiments/`: canonical benchmark specs.
 - `bench/baselines/`: one adapter per baseline.
 - `bench/slurm/`: cluster profiles and template.
+- `scripts/slurm/launch/`: canonical checked-in sbatch launch scripts.
 - `bench/tracking/`: upstream pins and patch files.
 - `bench/tools/benchctl.py`: CLI entrypoint.
 - `third_party/`: cloned upstream baseline repos managed by `benchctl bootstrap`.

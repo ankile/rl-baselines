@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
-import json
 import os
 from pathlib import Path
 import shlex
@@ -16,7 +15,6 @@ import sys
 from typing import Any, Iterable
 
 import yaml
-from jinja2 import Template
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -122,142 +120,6 @@ def apply_patch_file(repo: Path, patch_file: Path) -> str:
         return "already_applied"
 
     return "conflict"
-
-
-def make_context(exp: dict[str, Any], adapter: dict[str, Any], seed: int) -> dict[str, Any]:
-    task_id = exp["task_id"]
-    mapping = adapter["task_mapping"].get(task_id)
-    if not mapping:
-        raise BenchError(f"Adapter {adapter['baseline_id']} missing task_mapping for {task_id}")
-
-    ctx: dict[str, Any] = {}
-    ctx.update(mapping)
-    config_override = (
-        exp.get("config_path_by_baseline", {}).get(adapter["baseline_id"], "")
-        if isinstance(exp.get("config_path_by_baseline", {}), dict)
-        else ""
-    )
-    if config_override:
-        ctx["config_path"] = config_override
-    ctx.update(
-        {
-            "seed": seed,
-            "max_steps": exp["train_budget"]["max_steps"],
-            "offline_steps": exp["train_budget"].get("offline_steps", 0),
-            "online_steps": exp["train_budget"].get("online_steps", 0),
-            "eval_episodes": exp["eval"]["episodes"],
-            "eval_interval": exp["eval"]["interval"],
-            "wandb_project": exp["wandb"]["project"],
-            "wandb_entity": exp["wandb"].get("entity", ""),
-            "dataset_variant": exp.get("dataset_variant", ""),
-            "square_init_scale": exp.get("square_init_scale", 1.0),
-            "log_eval_video": exp.get("log_eval_video", 0),
-            "num_eval_video_episode": exp.get("num_eval_video_episode", 10),
-        }
-    )
-    return ctx
-
-
-def resolve_resources(exp: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(profile.get("resources", {}))
-    merged.update(exp.get("resources", {}))
-    required = ["time", "gpus", "cpus", "mem"]
-    missing = [k for k in required if k not in merged]
-    if missing:
-        raise BenchError(f"Missing resource fields: {', '.join(missing)}")
-    return merged
-
-
-def render_jobs(exp_path: Path, baseline_filter: set[str] | None = None) -> dict[str, Path]:
-    exp = load_yaml(exp_path)
-    required_check(exp, BENCH / "schemas" / "experiment.schema.yaml", "experiment")
-
-    profile_name = exp["cluster"]["profile"]
-    profile = load_yaml(BENCH / "slurm" / "profiles" / f"{profile_name}.yaml")
-    resources = resolve_resources(exp, profile)
-
-    template_text = (BENCH / "slurm" / "templates" / "job.sbatch.j2").read_text(encoding="utf-8")
-    template = Template(template_text)
-
-    generated: dict[str, Path] = {}
-    out_root = ROOT / "bench" / "generated" / "slurm" / exp["name"]
-    out_root.mkdir(parents=True, exist_ok=True)
-    script_name_overrides = exp.get("script_name_by_baseline", {})
-    if script_name_overrides is None:
-        script_name_overrides = {}
-    if not isinstance(script_name_overrides, dict):
-        raise BenchError("script_name_by_baseline must be a mapping from baseline id to script stem")
-
-    baseline_ids = enabled_baselines(exp)
-    if baseline_filter is not None:
-        baseline_ids = [b for b in baseline_ids if b in baseline_filter]
-
-    for baseline_id in baseline_ids:
-        adapter = load_adapter(baseline_id)
-        required_check(adapter, BENCH / "schemas" / "adapter.schema.yaml", f"adapter:{baseline_id}")
-
-        seeds = exp["seeds"]
-        commands: list[str] = []
-        for seed in seeds:
-            ctx = make_context(exp, adapter, seed)
-            try:
-                rendered_cmd = adapter["launch"]["command_template"].format(**ctx)
-            except KeyError as exc:
-                raise BenchError(
-                    f"Missing placeholder {exc} for baseline {baseline_id} seed {seed}"
-                ) from exc
-            commands.append(" ".join(rendered_cmd.split()))
-
-        repo_cwd = resolve(adapter["repo_path"])
-        env_name = adapter["env_name"]
-
-        env_exports_map = adapter.get("launch", {}).get("env", {})
-        env_exports = ""
-        if env_exports_map:
-            env_exports = " ".join(
-                f"{k}={shlex.quote(str(v))}" for k, v in env_exports_map.items()
-            )
-
-        escaped = [c.replace('"', '\\"') for c in commands]
-        commands_block = "\n".join(f'  "{c}"' for c in escaped)
-
-        logs_root = profile.get("logs_root", "bench/logs/slurm")
-        output_path = (
-            ROOT
-            / logs_root
-            / exp["name"]
-            / baseline_id
-            / "%A_%a.out"
-        )
-
-        script_text = template.render(
-            job_name=f"{exp['name']}-{baseline_id}",
-            time=resources["time"],
-            cpus=resources["cpus"],
-            mem=resources["mem"],
-            gpus=resources["gpus"],
-            output_path=output_path,
-            array_max=len(commands) - 1,
-            partition=profile.get("partition"),
-            account=profile.get("account"),
-            constraint=profile.get("constraint"),
-            commands_block=commands_block,
-            env_name=env_name,
-            repo_cwd=repo_cwd,
-            env_exports=env_exports,
-        )
-
-        script_stem = script_name_overrides.get(baseline_id, baseline_id)
-        if not isinstance(script_stem, str) or not script_stem.strip():
-            raise BenchError(f"Invalid script_name_by_baseline[{baseline_id!r}]: expected non-empty string")
-        out_path = out_root / f"{script_stem}.sbatch"
-        legacy_out_path = out_root / f"{baseline_id}.sbatch"
-        if legacy_out_path != out_path and legacy_out_path.exists():
-            legacy_out_path.unlink()
-        out_path.write_text(script_text, encoding="utf-8")
-        generated[baseline_id] = out_path
-
-    return generated
 
 
 def select_zsh_shell() -> str:
@@ -402,38 +264,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
 
     print(f"Validation passed: {exp_path}")
-    return 0
-
-
-def cmd_render(args: argparse.Namespace) -> int:
-    selected = {args.baseline} if args.baseline else None
-    rendered = render_jobs(resolve(args.experiment), selected)
-    if not rendered:
-        raise BenchError("No baseline scripts rendered")
-
-    for baseline_id, path in rendered.items():
-        print(f"rendered {baseline_id}: {path}")
-        if args.show:
-            print("-" * 80)
-            print(path.read_text(encoding="utf-8"))
-    return 0
-
-
-def cmd_launch(args: argparse.Namespace) -> int:
-    selected = {args.baseline} if args.baseline else None
-    rendered = render_jobs(resolve(args.experiment), selected)
-
-    for baseline_id, script in rendered.items():
-        if args.dry_run:
-            print(f"[dry-run] sbatch {script}")
-            continue
-
-        proc = subprocess.run(["sbatch", str(script)], text=True, capture_output=True)
-        if proc.returncode != 0:
-            print(f"launch failed for {baseline_id}: {proc.stderr.strip()}")
-            return proc.returncode
-        print(f"launched {baseline_id}: {proc.stdout.strip()}")
-
     return 0
 
 
@@ -681,18 +511,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_validate = sub.add_parser("validate", help="Validate experiment and adapters")
     p_validate.add_argument("--experiment", required=True, help="Path to experiment yaml")
     p_validate.set_defaults(func=cmd_validate)
-
-    p_render = sub.add_parser("render", help="Render slurm jobs")
-    p_render.add_argument("--experiment", required=True, help="Path to experiment yaml")
-    p_render.add_argument("--baseline", help="Render only one baseline")
-    p_render.add_argument("--show", action="store_true", help="Print rendered scripts")
-    p_render.set_defaults(func=cmd_render)
-
-    p_launch = sub.add_parser("launch", help="Submit slurm jobs")
-    p_launch.add_argument("--experiment", required=True, help="Path to experiment yaml")
-    p_launch.add_argument("--baseline", help="Launch only one baseline")
-    p_launch.add_argument("--dry-run", action="store_true", help="Print sbatch commands only")
-    p_launch.set_defaults(func=cmd_launch)
 
     p_bootstrap = sub.add_parser("bootstrap", help="Clone/sync/apply patches for baselines")
     p_bootstrap.add_argument("--baseline", help="Bootstrap one baseline")
