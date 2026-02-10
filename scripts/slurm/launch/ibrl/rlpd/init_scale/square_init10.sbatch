@@ -30,6 +30,4 @@ python train_rl.py \
   --wandb_entity ankile \
   --num_train_step 10000000 \
   --num_eval_episode 100 \
-  --log_eval_video 1 \
-  --num_eval_video_episode 10 \
   --log_per_step 25000

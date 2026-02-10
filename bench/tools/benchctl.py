@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any, Iterable
 
 import yaml
@@ -122,14 +123,47 @@ def apply_patch_file(repo: Path, patch_file: Path) -> str:
     return "conflict"
 
 
+def patch_file_for_apply(rel_patch: str) -> tuple[Path, Path | None]:
+    patch = resolve(rel_patch)
+    if not patch.exists():
+        return patch, None
+
+    committed = subprocess.run(
+        ["git", "show", f"HEAD:{rel_patch}"],
+        cwd=str(ROOT),
+        text=True,
+        capture_output=True,
+    )
+    if committed.returncode != 0 or not committed.stdout:
+        return patch, None
+
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".patch",
+        prefix="benchctl_",
+        delete=False,
+        encoding="utf-8",
+    )
+    tmp.write(committed.stdout)
+    tmp.close()
+    tmp_path = Path(tmp.name)
+    return tmp_path, tmp_path
+
+
 def apply_patches_for_baseline(repo: Path, cfg: dict[str, Any], baseline_id: str) -> None:
     for rel_patch in cfg.get("patches", []):
-        patch = resolve(rel_patch)
-        state = apply_patch_file(repo, patch)
-        print(f"patch {baseline_id}: {patch} -> {state}")
+        patch, cleanup = patch_file_for_apply(rel_patch)
+        digest = hashlib.sha256(patch.read_bytes()).hexdigest()[:12] if patch.exists() else "missing"
+        try:
+            state = apply_patch_file(repo, patch)
+        finally:
+            if cleanup is not None:
+                cleanup.unlink(missing_ok=True)
+
+        print(f"patch {baseline_id}: {resolve(rel_patch)} [{digest}] -> {state}")
         if state in {"missing", "conflict"}:
             raise BenchError(
-                f"{baseline_id}: patch apply failed ({state}) for {patch}. "
+                f"{baseline_id}: patch apply failed ({state}) for {resolve(rel_patch)}. "
                 "Fix conflicts or refresh the patch, then rerun bootstrap."
             )
 
@@ -478,9 +512,14 @@ def cmd_tracking_status(_: argparse.Namespace) -> int:
             print(f"[{baseline_id}] tracked changes:\n{status}")
 
         for rel_patch in cfg.get("patches", []):
-            patch = resolve(rel_patch)
-            state = patch_state(repo, patch)
-            print(f"[{baseline_id}] patch {patch}: {state}")
+            patch, cleanup = patch_file_for_apply(rel_patch)
+            digest = hashlib.sha256(patch.read_bytes()).hexdigest()[:12] if patch.exists() else "missing"
+            try:
+                state = patch_state(repo, patch)
+            finally:
+                if cleanup is not None:
+                    cleanup.unlink(missing_ok=True)
+            print(f"[{baseline_id}] patch {resolve(rel_patch)} [{digest}]: {state}")
             if state in {"missing", "conflict"}:
                 any_bad = True
 

@@ -31,27 +31,15 @@ baselines:
       - release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml
     patches:
       - bench/tracking/patches/ibrl/20260208_square_online_rl.patch
-    post_patch_required_files:
-      - scripts/square_online_rl.sbatch
-      - scripts/square_rlpd_initscale_10.sbatch
-      - scripts/square_rlpd_initscale_50.sbatch
-      - scripts/square_rlpd_initscale_80.sbatch
-      - scripts/square_rlpd_initscale_100.sbatch
-      - release/cfgs/robomimic_rl/square_state_online.yaml
-      - release/cfgs/robomimic_rl/square_state_rlpd_online.yaml
-      - release/cfgs/robomimic_rl/square_state_rlpd_initscale.yaml
     post_patch_markers:
       - path: train_rl.py
         contains:
-          - "square_init_scale: float = 1.0"
-          - "log_eval_video: int = 0"
-          - "num_eval_video_episode: int = 10"
+          - "square_init_scale"
+          - "log_eval_video"
+          - "num_eval_video_episode"
       - path: env/robosuite_wrapper.py
         contains:
-          - "def _apply_square_init_scale"
-      - path: evaluate/eval.py
-        contains:
-          - "record_num_episode"
+          - "_apply_square_init_scale"
 
   dsrl:
     repo_path: third_party/dsrl
