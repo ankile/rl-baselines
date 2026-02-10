@@ -36,6 +36,7 @@ launch:
     MUJOCO_GL: egl
     WANDB_DIR: .
     WANDB__SERVICE_WAIT: "120"
+    NUMBA_CACHE_DIR: .numba_cache
 
 wandb_mapping:
   project_arg: --wandb_project

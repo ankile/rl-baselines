@@ -25,6 +25,7 @@ else
   echo "ERROR: Missing '${ROOT}/third_party/qam'. Run './benchctl bootstrap --baseline qam' from '${ROOT}'." >&2
   exit 1
 fi
+mkdir -p "${QAM_DIR}/.numba_cache"
 
 micromamba run -n qam bash -lc "
 set -euo pipefail
@@ -32,6 +33,7 @@ cd '${QAM_DIR}'
 export MUJOCO_GL=egl
 export WANDB_DIR=.
 export WANDB__SERVICE_WAIT=120
+export NUMBA_CACHE_DIR='${ROOT}/third_party/qam/.numba_cache'
 export CPATH=\"\$CONDA_PREFIX/include\${CPATH:+:\$CPATH}\"
 export LIBRARY_PATH=\"\$CONDA_PREFIX/lib\${LIBRARY_PATH:+:\$LIBRARY_PATH}\"
 for d in \"\$CONDA_PREFIX\"/lib/python*/site-packages/nvidia/*/lib; do
