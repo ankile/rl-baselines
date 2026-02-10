@@ -6,6 +6,7 @@ Assumptions:
 - Run `sbatch` from the `rl-baselines` repository root.
 - Activate the correct environment before launch.
 - Required `third_party/<baseline>` source trees and data already exist.
+- For IBRL init-scale scripts, `third_party/ibrl` must include the init-scale patch (bootstrap applies this).
 
 Layout:
 - `expo/reproduce/`: EXPO square online RL scripts.

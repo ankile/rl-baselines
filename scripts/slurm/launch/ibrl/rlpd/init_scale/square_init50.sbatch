@@ -21,6 +21,12 @@ export MUJOCO_GL=egl
 export WANDB_DIR=.
 export WANDB__SERVICE_WAIT=120
 
+if ! python train_rl.py --help 2>&1 | grep -q -- "--square_init_scale"; then
+  echo "ERROR: init-scale support missing in third_party/ibrl (train_rl.py has no --square_init_scale)." >&2
+  echo "Run from rl-baselines root: ./benchctl bootstrap --baseline ibrl --force" >&2
+  exit 2
+fi
+
 python train_rl.py \
   --config_path release/cfgs/robomimic_rl/square_state_rlpd.yaml \
   --seed="${SEED}" \

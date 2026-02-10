@@ -291,10 +291,12 @@ def bootstrap_one(
     if checkout:
         dirty = git_status(repo)
         if dirty and not force:
-            print(f"WARN {baseline_id}: repo is dirty, skipping checkout. Use --force to override.")
-        else:
-            print(f"checkout {baseline_id} -> {cfg['upstream_commit']}")
-            run_cmd(["git", "checkout", cfg["upstream_commit"]], cwd=repo)
+            raise BenchError(
+                f"{baseline_id}: repo is dirty; refusing checkout. "
+                f"Commit/stash changes or rerun with --force."
+            )
+        print(f"checkout {baseline_id} -> {cfg['upstream_commit']}")
+        run_cmd(["git", "checkout", cfg["upstream_commit"]], cwd=repo)
 
     run_cmd(["git", "submodule", "update", "--init", "--recursive"], cwd=repo)
 
@@ -303,6 +305,11 @@ def bootstrap_one(
             patch = resolve(rel_patch)
             state = apply_patch_file(repo, patch)
             print(f"patch {baseline_id}: {patch} -> {state}")
+            if state in {"missing", "conflict"}:
+                raise BenchError(
+                    f"{baseline_id}: patch apply failed ({state}) for {patch}. "
+                    "Fix conflicts or refresh the patch, then rerun bootstrap."
+                )
 
 
 def create_env_from_spec(baseline_id: str) -> None:
