@@ -122,6 +122,66 @@ def apply_patch_file(repo: Path, patch_file: Path) -> str:
     return "conflict"
 
 
+def apply_patches_for_baseline(repo: Path, cfg: dict[str, Any], baseline_id: str) -> None:
+    for rel_patch in cfg.get("patches", []):
+        patch = resolve(rel_patch)
+        state = apply_patch_file(repo, patch)
+        print(f"patch {baseline_id}: {patch} -> {state}")
+        if state in {"missing", "conflict"}:
+            raise BenchError(
+                f"{baseline_id}: patch apply failed ({state}) for {patch}. "
+                "Fix conflicts or refresh the patch, then rerun bootstrap."
+            )
+
+
+def verify_post_patch(repo: Path, cfg: dict[str, Any], baseline_id: str) -> list[str]:
+    errors: list[str] = []
+
+    for rel in cfg.get("post_patch_required_files", []):
+        path = repo / rel
+        if not path.exists():
+            errors.append(f"{baseline_id}: missing expected file after patch: {path}")
+
+    markers = cfg.get("post_patch_markers", [])
+    if not isinstance(markers, list):
+        errors.append(f"{baseline_id}: post_patch_markers must be a list")
+        return errors
+
+    for marker in markers:
+        if not isinstance(marker, dict):
+            errors.append(f"{baseline_id}: invalid post_patch_markers entry: {marker!r}")
+            continue
+
+        rel_path = marker.get("path")
+        contains = marker.get("contains")
+        if not rel_path:
+            errors.append(f"{baseline_id}: post_patch_markers entry missing path: {marker!r}")
+            continue
+        if isinstance(contains, str):
+            needles = [contains]
+        elif isinstance(contains, list):
+            needles = [str(x) for x in contains]
+        else:
+            errors.append(
+                f"{baseline_id}: post_patch_markers[{rel_path}] contains must be str or list"
+            )
+            continue
+
+        path = repo / str(rel_path)
+        if not path.exists():
+            errors.append(f"{baseline_id}: missing marker file after patch: {path}")
+            continue
+
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for needle in needles:
+            if needle not in text:
+                errors.append(
+                    f"{baseline_id}: missing marker in {path}: {needle!r}"
+                )
+
+    return errors
+
+
 def select_zsh_shell() -> str:
     candidates: list[str] = []
     env_shell = os.environ.get("SHELL")
@@ -296,20 +356,35 @@ def bootstrap_one(
                 f"Commit/stash changes or rerun with --force."
             )
         print(f"checkout {baseline_id} -> {cfg['upstream_commit']}")
-        run_cmd(["git", "checkout", cfg["upstream_commit"]], cwd=repo)
+        checkout_cmd = ["git", "checkout"]
+        if force:
+            checkout_cmd.append("--force")
+        checkout_cmd.append(cfg["upstream_commit"])
+        run_cmd(checkout_cmd, cwd=repo)
+        if force:
+            # Keep --force behavior deterministic across machines by clearing stale state.
+            run_cmd(["git", "reset", "--hard", cfg["upstream_commit"]], cwd=repo)
+            run_cmd(["git", "clean", "-fd"], cwd=repo)
 
     run_cmd(["git", "submodule", "update", "--init", "--recursive"], cwd=repo)
 
     if apply_patches:
-        for rel_patch in cfg.get("patches", []):
-            patch = resolve(rel_patch)
-            state = apply_patch_file(repo, patch)
-            print(f"patch {baseline_id}: {patch} -> {state}")
-            if state in {"missing", "conflict"}:
-                raise BenchError(
-                    f"{baseline_id}: patch apply failed ({state}) for {patch}. "
-                    "Fix conflicts or refresh the patch, then rerun bootstrap."
-                )
+        apply_patches_for_baseline(repo, cfg, baseline_id)
+
+    verify_errors = verify_post_patch(repo, cfg, baseline_id)
+    if verify_errors and force and checkout and apply_patches:
+        print(f"{baseline_id}: patch verification failed; retrying clean apply")
+        run_cmd(["git", "reset", "--hard", cfg["upstream_commit"]], cwd=repo)
+        run_cmd(["git", "clean", "-fd"], cwd=repo)
+        apply_patches_for_baseline(repo, cfg, baseline_id)
+        verify_errors = verify_post_patch(repo, cfg, baseline_id)
+
+    if verify_errors:
+        joined = "\n".join(f"- {err}" for err in verify_errors)
+        raise BenchError(
+            f"{baseline_id}: post-patch verification failed:\n{joined}\n"
+            "Rerun bootstrap with --force to reset stale repo state."
+        )
 
 
 def create_env_from_spec(baseline_id: str) -> None:
@@ -408,6 +483,12 @@ def cmd_tracking_status(_: argparse.Namespace) -> int:
             print(f"[{baseline_id}] patch {patch}: {state}")
             if state in {"missing", "conflict"}:
                 any_bad = True
+
+        verify_errors = verify_post_patch(repo, cfg, baseline_id)
+        for err in verify_errors:
+            print(f"[{baseline_id}] {err}")
+        if verify_errors:
+            any_bad = True
 
         if not head_ok:
             any_bad = True
