@@ -25,7 +25,6 @@ python train_rl.py \
   --seed="${SEED}" \
   --run_name_method rlpd \
   --wandb_project square-online-rl-saturation \
-  --wandb_entity ankile \
   --num_train_step 10000000 \
   --num_eval_episode 100 \
   --log_eval_video 0 \

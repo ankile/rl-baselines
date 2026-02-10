@@ -27,7 +27,6 @@ python train_rl.py \
   --square_init_scale "${SCALE}" \
   --run_name_method rlpd \
   --wandb_project rlpd-square-initscale \
-  --wandb_entity ankile \
   --num_train_step 10000000 \
   --num_eval_episode 100 \
   --log_per_step 25000
