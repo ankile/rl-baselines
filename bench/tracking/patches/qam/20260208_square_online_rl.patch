@@ -20,12 +20,121 @@ index 1544abb..966a816 100644
      else:
          raise ValueError(f'Unsupported environment: {env_name}')
  
+diff --git a/evaluation.py b/evaluation.py
+index 38d3caa..9f8f317 100644
+--- a/evaluation.py
++++ b/evaluation.py
+@@ -64,6 +64,8 @@ def evaluate(
+     actor_fn = supply_rng(partial(agent.sample_actions, **extra_sample_kwargs), rng=jax.random.PRNGKey(np.random.randint(0, 2**32)))
+     trajs = []
+     stats = defaultdict(list)
++    successes = []
++    success_lengths = []
+ 
+     renders = []
+     for i in trange(num_eval_episodes + num_video_episodes):
+@@ -150,9 +152,21 @@ def evaluate(
+         if i < num_eval_episodes:
+             add_to(stats, flatten(info))
+             trajs.append(traj)
++            # Add episode length and return metrics
++            add_to(stats, {'length': step, 'return': np.sum(traj['reward'])})
++            # Track success for robomimic environments
++            if 'success' in info:
++                successes.append(info['success'])
++                if info['success'] > 0:
++                    success_lengths.append(step)
+         else:
+             renders.append(np.array(render))
+ 
++    # Add success metrics
++    if successes:
++        stats['success_rate'] = [np.mean(successes)]
++        stats['success_length_mean'] = [np.mean(success_lengths) if success_lengths else 0.0]
++
+     for k, v in stats.items():
+         stats[k] = np.mean(v)
+ 
+diff --git a/main.py b/main.py
+index c95f3e9..266dd64 100644
+--- a/main.py
++++ b/main.py
+@@ -5,6 +5,7 @@ from log_utils import setup_wandb, get_exp_name, get_flag_dict, CsvLogger
+ 
+ from envs.env_utils import make_env_and_datasets
+ from envs.ogbench_utils import make_ogbench_env_and_datasets
++from envs.robomimic_utils import is_robomimic_env
+ 
+ from utils.flax_utils import save_agent, restore_agent
+ from utils.datasets import Dataset, ReplayBuffer
+@@ -16,6 +17,7 @@ import numpy as np
+ FLAGS = flags.FLAGS
+ 
+ flags.DEFINE_string('run_group', 'Debug', 'Run group.')
++flags.DEFINE_string('wandb_project', 'qam-reproduce', 'Wandb project name.')
+ flags.DEFINE_string('tags', 'Default', 'Wandb tag.')
+ flags.DEFINE_integer('seed', 0, 'Random seed.')
+ flags.DEFINE_string('env_name', 'cube-triple-play-singletask-task2-v0', 'Environment (dataset) name.')
+@@ -48,6 +50,8 @@ flags.DEFINE_bool('auto_cleanup', True, "remove all intermediate checkpoints whe
+ 
+ flags.DEFINE_bool('balanced_sampling', False, "sample half offline and online replay buffer")
+ 
++flags.DEFINE_bool('adjust_robomimic_reward', True, "Adjust robomimic reward from [0,1] to [-1,0]")
++
+ def save_csv_loggers(csv_loggers, save_dir):
+     for prefix, csv_logger in csv_loggers.items():
+         csv_logger.save(os.path.join(save_dir, f"{prefix}_sv.csv"))
+@@ -67,11 +71,17 @@ class LoggingHelper:
+     def log(self, data, prefix, step):
+         assert prefix in self.csv_loggers, prefix
+         self.csv_loggers[prefix].log(data, step=step)
+-        self.wandb_logger.log({f'{prefix}/{k}': v for k, v in data.items()}, step=step)
++
++        # Map to standardized prefix for wandb
++        wandb_prefix = 'train' if prefix in ['offline_agent', 'online_agent'] else prefix
++
++        # Flatten nested keys (e.g., critic/loss -> critic_loss)
++        flat_data = {f'{wandb_prefix}/{k.replace("/", "_")}': v for k, v in data.items()}
++        self.wandb_logger.log(flat_data, step=step)
+ 
+ def main(_):
+     exp_name = get_exp_name(FLAGS)
+-    run = setup_wandb(project='qam-reproduce', group=FLAGS.run_group, name=exp_name, tags=FLAGS.tags.split(","))
++    run = setup_wandb(project=FLAGS.wandb_project, group=FLAGS.run_group, name=exp_name, tags=FLAGS.tags.split(","))
+     FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, FLAGS.run_group, FLAGS.env_name, exp_name)
+     
+     # data loading
+@@ -131,6 +141,13 @@ def main(_):
+             ds_dict["rewards"] = sparse_rewards
+             ds = Dataset.create(**ds_dict)
+ 
++        # Adjust robomimic rewards from [0,1] to [-1,0]
++        if is_robomimic_env(FLAGS.env_name) and FLAGS.adjust_robomimic_reward:
++            adjusted_rewards = ds["rewards"] - 1.0
++            ds_dict = {k: v for k, v in ds.items()}
++            ds_dict["rewards"] = adjusted_rewards
++            ds = Dataset.create(**ds_dict)
++
+         return ds
+     
+     train_dataset = process_train_dataset(train_dataset)
+@@ -321,6 +338,10 @@ def main(_):
+             assert int_reward <= 0.0
+             int_reward = (int_reward != 0.0) * -1.0
+ 
++        # Adjust robomimic rewards from [0,1] to [-1,0]
++        if is_robomimic_env(FLAGS.env_name) and FLAGS.adjust_robomimic_reward:
++            int_reward = int_reward - 1.0
++
+         transition = dict(
+             observations=ob,
+             actions=action,
 diff --git a/envs/robomimic_utils.py b/envs/robomimic_utils.py
 new file mode 100644
-index 0000000..2fef374
+index 0000000..4ccc8b4
 --- /dev/null
 +++ b/envs/robomimic_utils.py
-@@ -0,0 +1,459 @@
+@@ -0,0 +1,486 @@
 +from os.path import expanduser
 +import os
 +
@@ -42,6 +151,15 @@ index 0000000..2fef374
 +from robomimic import DATASET_REGISTRY
 +
 +from utils.datasets import Dataset
++
++
++def _robosuite_major_minor():
++    import robosuite
++
++    parts = robosuite.__version__.split(".")
++    major = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
++    minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
++    return major, minor
 +
 +
 +def is_robomimic_env(env_name):
@@ -134,28 +252,46 @@ index 0000000..2fef374
 +        # which is incompatible with older versions
 +        if "controller_configs" in env_meta["env_kwargs"]:
 +            ctrl_cfg = env_meta["env_kwargs"]["controller_configs"]
-+            if isinstance(ctrl_cfg, dict) and ctrl_cfg.get("type") == "BASIC":
-+                # Replace with OSC_POSE controller config for compatibility
-+                # Single config dict works for both single-arm and multi-arm envs
-+                # (robosuite replicates it automatically for each arm)
-+                env_meta["env_kwargs"]["controller_configs"] = {
-+                    "type": "OSC_POSE",
-+                    "input_max": 1,
-+                    "input_min": -1,
-+                    "output_max": [0.05, 0.05, 0.05, 0.5, 0.5, 0.5],
-+                    "output_min": [-0.05, -0.05, -0.05, -0.5, -0.5, -0.5],
-+                    "kp": 150,
-+                    "damping": 1,
-+                    "impedance_mode": "fixed",
-+                    "kp_limits": [0, 300],
-+                    "damping_limits": [0, 10],
-+                    "position_limits": None,
-+                    "orientation_limits": None,
-+                    "uncouple_pos_ori": True,
-+                    "control_delta": True,
-+                    "interpolation": None,
-+                    "ramp_ratio": 0.2,
-+                }
++            if isinstance(ctrl_cfg, dict):
++                if _robosuite_major_minor() >= (1, 5):
++                    # Robosuite >=1.5 expects a composite controller config.
++                    from robosuite.controllers.composite.composite_controller_factory import (
++                        refactor_composite_controller_config,
++                    )
++
++                    robots = env_meta["env_kwargs"].get("robots", ["Panda"])
++                    if isinstance(robots, (list, tuple)):
++                        robot_type = robots[0] if robots else "Panda"
++                        arms = ["right", "left"] if len(robots) > 1 else ["right"]
++                    else:
++                        robot_type = robots
++                        arms = ["right"]
++                    env_meta["env_kwargs"]["controller_configs"] = refactor_composite_controller_config(
++                        ctrl_cfg,
++                        robot_type,
++                        arms,
++                    )
++                elif ctrl_cfg.get("type") == "BASIC":
++                    # Replace with OSC_POSE controller config for compatibility
++                    # with older robosuite versions.
++                    env_meta["env_kwargs"]["controller_configs"] = {
++                        "type": "OSC_POSE",
++                        "input_max": 1,
++                        "input_min": -1,
++                        "output_max": [0.05, 0.05, 0.05, 0.5, 0.5, 0.5],
++                        "output_min": [-0.05, -0.05, -0.05, -0.5, -0.5, -0.5],
++                        "kp": 150,
++                        "damping": 1,
++                        "impedance_mode": "fixed",
++                        "kp_limits": [0, 300],
++                        "damping_limits": [0, 10],
++                        "position_limits": None,
++                        "orientation_limits": None,
++                        "uncouple_pos_ori": True,
++                        "control_delta": True,
++                        "interpolation": None,
++                        "ramp_ratio": 0.2,
++                    }
 +
 +    env = EnvUtils.create_env_from_metadata(
 +        env_meta=env_meta,
@@ -485,115 +621,6 @@ index 0000000..2fef374
 +    dataset = get_dataset(env, "lift-mh-low_dim")
 +    print(dataset)
 +    # transport-mh-low_dim
-diff --git a/evaluation.py b/evaluation.py
-index 38d3caa..9f8f317 100644
---- a/evaluation.py
-+++ b/evaluation.py
-@@ -64,6 +64,8 @@ def evaluate(
-     actor_fn = supply_rng(partial(agent.sample_actions, **extra_sample_kwargs), rng=jax.random.PRNGKey(np.random.randint(0, 2**32)))
-     trajs = []
-     stats = defaultdict(list)
-+    successes = []
-+    success_lengths = []
- 
-     renders = []
-     for i in trange(num_eval_episodes + num_video_episodes):
-@@ -150,9 +152,21 @@ def evaluate(
-         if i < num_eval_episodes:
-             add_to(stats, flatten(info))
-             trajs.append(traj)
-+            # Add episode length and return metrics
-+            add_to(stats, {'length': step, 'return': np.sum(traj['reward'])})
-+            # Track success for robomimic environments
-+            if 'success' in info:
-+                successes.append(info['success'])
-+                if info['success'] > 0:
-+                    success_lengths.append(step)
-         else:
-             renders.append(np.array(render))
- 
-+    # Add success metrics
-+    if successes:
-+        stats['success_rate'] = [np.mean(successes)]
-+        stats['success_length_mean'] = [np.mean(success_lengths) if success_lengths else 0.0]
-+
-     for k, v in stats.items():
-         stats[k] = np.mean(v)
- 
-diff --git a/main.py b/main.py
-index c95f3e9..266dd64 100644
---- a/main.py
-+++ b/main.py
-@@ -5,6 +5,7 @@ from log_utils import setup_wandb, get_exp_name, get_flag_dict, CsvLogger
- 
- from envs.env_utils import make_env_and_datasets
- from envs.ogbench_utils import make_ogbench_env_and_datasets
-+from envs.robomimic_utils import is_robomimic_env
- 
- from utils.flax_utils import save_agent, restore_agent
- from utils.datasets import Dataset, ReplayBuffer
-@@ -16,6 +17,7 @@ import numpy as np
- FLAGS = flags.FLAGS
- 
- flags.DEFINE_string('run_group', 'Debug', 'Run group.')
-+flags.DEFINE_string('wandb_project', 'qam-reproduce', 'Wandb project name.')
- flags.DEFINE_string('tags', 'Default', 'Wandb tag.')
- flags.DEFINE_integer('seed', 0, 'Random seed.')
- flags.DEFINE_string('env_name', 'cube-triple-play-singletask-task2-v0', 'Environment (dataset) name.')
-@@ -48,6 +50,8 @@ flags.DEFINE_bool('auto_cleanup', True, "remove all intermediate checkpoints whe
- 
- flags.DEFINE_bool('balanced_sampling', False, "sample half offline and online replay buffer")
- 
-+flags.DEFINE_bool('adjust_robomimic_reward', True, "Adjust robomimic reward from [0,1] to [-1,0]")
-+
- def save_csv_loggers(csv_loggers, save_dir):
-     for prefix, csv_logger in csv_loggers.items():
-         csv_logger.save(os.path.join(save_dir, f"{prefix}_sv.csv"))
-@@ -67,11 +71,17 @@ class LoggingHelper:
-     def log(self, data, prefix, step):
-         assert prefix in self.csv_loggers, prefix
-         self.csv_loggers[prefix].log(data, step=step)
--        self.wandb_logger.log({f'{prefix}/{k}': v for k, v in data.items()}, step=step)
-+
-+        # Map to standardized prefix for wandb
-+        wandb_prefix = 'train' if prefix in ['offline_agent', 'online_agent'] else prefix
-+
-+        # Flatten nested keys (e.g., critic/loss -> critic_loss)
-+        flat_data = {f'{wandb_prefix}/{k.replace("/", "_")}': v for k, v in data.items()}
-+        self.wandb_logger.log(flat_data, step=step)
- 
- def main(_):
-     exp_name = get_exp_name(FLAGS)
--    run = setup_wandb(project='qam-reproduce', group=FLAGS.run_group, name=exp_name, tags=FLAGS.tags.split(","))
-+    run = setup_wandb(project=FLAGS.wandb_project, group=FLAGS.run_group, name=exp_name, tags=FLAGS.tags.split(","))
-     FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, FLAGS.run_group, FLAGS.env_name, exp_name)
-     
-     # data loading
-@@ -131,6 +141,13 @@ def main(_):
-             ds_dict["rewards"] = sparse_rewards
-             ds = Dataset.create(**ds_dict)
- 
-+        # Adjust robomimic rewards from [0,1] to [-1,0]
-+        if is_robomimic_env(FLAGS.env_name) and FLAGS.adjust_robomimic_reward:
-+            adjusted_rewards = ds["rewards"] - 1.0
-+            ds_dict = {k: v for k, v in ds.items()}
-+            ds_dict["rewards"] = adjusted_rewards
-+            ds = Dataset.create(**ds_dict)
-+
-         return ds
-     
-     train_dataset = process_train_dataset(train_dataset)
-@@ -321,6 +338,10 @@ def main(_):
-             assert int_reward <= 0.0
-             int_reward = (int_reward != 0.0) * -1.0
- 
-+        # Adjust robomimic rewards from [0,1] to [-1,0]
-+        if is_robomimic_env(FLAGS.env_name) and FLAGS.adjust_robomimic_reward:
-+            int_reward = int_reward - 1.0
-+
-         transition = dict(
-             observations=ob,
-             actions=action,
 diff --git a/scripts/square_qam.sbatch b/scripts/square_qam.sbatch
 new file mode 100644
 index 0000000..766a42e
