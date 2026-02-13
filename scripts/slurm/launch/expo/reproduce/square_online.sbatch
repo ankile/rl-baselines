@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --time=2-00:00:00
+#SBATCH --time=4-00:00:00
 #SBATCH --cpus-per-task=12
-#SBATCH --mem=64G
+#SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-2
+#SBATCH --array=0
 #SBATCH --job-name=square-expo
 #SBATCH --output=logs/square_expo_%A_%a.out
 
@@ -25,7 +25,7 @@ python train_robo.py \
   --env_name=square \
   --seed="${SEED}" \
   --dataset_dir=ph \
-  --utd_ratio=20 \
+  --utd_ratio=10 \
   --start_training=0 \
   --pretrain_steps=200000 \
   --pretrain_q=False \

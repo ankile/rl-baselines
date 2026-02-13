@@ -9,9 +9,9 @@ create:
     - >
       bash -lc 'if micromamba run -n expo python -c "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 9) else 1)" >/dev/null 2>&1; then echo "expo env already exists with supported python; skipping create"; else micromamba env remove -n expo -y >/dev/null 2>&1 || true; micromamba create -n expo python=3.10 pip -y; fi'
     - >
-      micromamba run -n expo bash -lc "tmp_req=\$(mktemp /tmp/expo_requirements.XXXXXX.txt); grep -Ev '^(gym\\[mujoco\\]|dmcgym)' third_party/EXPO/requirements.txt > \"\$tmp_req\"; python -m pip install -r \"\$tmp_req\"; python -m pip install 'numpy==1.26.4' 'gym==0.23.1'; python -m pip install --no-deps \"dmcgym @ git+https://github.com/ikostrikov/dmcgym\"; rm -f \"\$tmp_req\""
+      micromamba run -n expo bash -lc "tmp_req=\$(mktemp /tmp/expo_requirements.XXXXXX.txt); grep -Ev '^(gym\\[mujoco\\]|dmcgym)' third_party/EXPO/requirements.txt > \"\$tmp_req\"; python -m pip install 'Cython<3'; python -m pip install -r \"\$tmp_req\"; python -m pip install 'numpy==1.26.4' 'gym==0.23.1'; python -m pip install --no-deps \"dmcgym @ git+https://github.com/ikostrikov/dmcgym\"; rm -f \"\$tmp_req\""
     - >
       micromamba run -n expo python -m pip install "jax[cuda12]==0.6.2" "chex==0.1.90" "flax==0.10.7" "optax==0.2.6" "distrax==0.1.5" easydict dm_env_wrappers "jax-jumpy==1.0.0" "orbax-checkpoint==0.11.32" submitit ml_collections tensorboardX
     - >
-      micromamba run -n expo python -m pip install --no-deps "git+https://github.com/Farama-Foundation/D4RL.git@2b96431a0e9fd90c8032624b0dc3cd4514d15632" "git+https://github.com/ARISE-Initiative/robomimic@dde3a6e74886e0768cedf18f8f9c813d47d31ebd" "git+https://github.com/ARISE-Initiative/robosuite@de64fa5935f9f30ce01b36a3ef1a3242060b9cdb"
+      micromamba run -n expo python -m pip install --no-deps "git+https://github.com/Farama-Foundation/D4RL.git@2b96431a0e9fd90c8032624b0dc3cd4514d15632" "git+https://github.com/ARISE-Initiative/robomimic@dde3a6e74886e0768cedf18f8f9c813d47d31ebd" "robosuite==1.4.1" "git+https://github.com/NVlabs/mimicgen.git@72bd767c255545f462e7ccfb2731f2e5d4c1d9bb"
     - micromamba install -n expo -c conda-forge glew mesalib libgl-devel libegl-devel patchelf -y

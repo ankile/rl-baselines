@@ -81,6 +81,20 @@ cd rl-baselines
    cd ../../..
    ```
 
+   **expo** — Download the robomimic Square PH low-dim dataset expected by EXPO at `third_party/EXPO/robomimic/datasets/square/ph/low_dim_v141.hdf5`:
+
+   ```bash
+   if [ ! -f third_party/EXPO/robomimic/datasets/square/ph/low_dim_v141.hdf5 ]; then
+     micromamba run -n expo python -m robomimic.scripts.download_datasets \
+       --download_dir third_party/EXPO/robomimic/datasets \
+       --tasks square \
+       --dataset_types ph \
+       --hdf5_types low_dim
+   else
+     echo "EXPO dataset already present at third_party/EXPO/robomimic/datasets/square/ph/low_dim_v141.hdf5"
+   fi
+   ```
+
    **qam** — Download the robomimic Square MH low-dim dataset expected by QAM at `~/.robomimic/square/mh/low_dim_v141.hdf5`:
 
    ```bash
@@ -163,6 +177,12 @@ Example usage:
 ```bash
 sbatch scripts/slurm/launch/ibrl/rlpd/init_scale/square_init10.sbatch
 ```
+
+Launch assumptions (intentionally simple):
+- Run `sbatch` from the `rl-baselines` repository root.
+- Activate the correct micromamba/conda environment before launching.
+- `third_party/<baseline>` repos and required data already exist from setup/bootstrap.
+- If `third_party/ibrl` is stale after pulling updates, rerun `./benchctl bootstrap --baseline ibrl --force`.
 
 Compatibility root-level scripts (`square_*.sbatch`) are still available.
 
