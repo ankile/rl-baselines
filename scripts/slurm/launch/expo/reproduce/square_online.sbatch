@@ -40,5 +40,4 @@ python train_robo.py \
   --config.N=8 \
   --config.n_edit_samples=8 \
   --config.edit_action_scale=0.1 \
-  --project_name=square-online-rl-saturation \
-  --wandb_entity=ankile
+  --project_name=square-online-rl-saturation
