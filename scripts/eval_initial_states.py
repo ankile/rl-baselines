@@ -22,6 +22,8 @@ Output (pickle): list of dicts, each with:
   - episode_length: int
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import sys
