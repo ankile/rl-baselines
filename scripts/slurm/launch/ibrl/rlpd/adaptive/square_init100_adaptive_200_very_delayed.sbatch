@@ -3,9 +3,9 @@
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=32GB
 #SBATCH --gres=gpu:1
-#SBATCH --array=0
-#SBATCH --job-name=rlpd_sq_adapt_vdel
-#SBATCH --output=logs/rlpd_sq_adapt_vdel_%A_%a.out
+#SBATCH --array=0-4
+#SBATCH --job-name=rlpd_adapt_v2
+#SBATCH --output=logs/rlpd_adapt_v2_%A_%a.out
 
 set -euo pipefail
 
@@ -27,11 +27,11 @@ python train_rl.py \
   --config_path release/cfgs/robomimic_rl/square_state_rlpd_adaptive.yaml \
   --seed="${SEED}" \
   --preload_num_data 200 \
-  --run_name_method rlpd_adaptive_200_verydelayed \
+  --run_name_method rlpd_adaptive_vdel_v2 \
   --num_train_step 10000000 \
   --num_eval_episode 100 \
   --log_per_step 25000 \
   --adaptive_warmup_cliff_episodes 4000 \
   --adaptive_warmup_episodes 1000 \
   --adaptive_decay 0.99 \
-  --replay_buffer_size 5000
+  --replay_buffer_size 10000

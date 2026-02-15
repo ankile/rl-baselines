@@ -3,9 +3,9 @@
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=32GB
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-0
-#SBATCH --job-name=rlpd_sq_uniform_200
-#SBATCH --output=logs/rlpd_sq_uniform_200_%A_%a.out
+#SBATCH --array=0-4
+#SBATCH --job-name=rlpd_unif_v2
+#SBATCH --output=logs/rlpd_unif_v2_%A_%a.out
 
 set -euo pipefail
 
@@ -26,8 +26,9 @@ python train_rl.py \
   --seed="${SEED}" \
   --square_init_scale "${SCALE}" \
   --wandb_project rlpd-square-adaptive \
-  --run_name_method rlpd_uniform_200 \
+  --run_name_method rlpd_uniform_v2 \
   --preload_num_data 200 \
   --num_train_step 10000000 \
   --num_eval_episode 100 \
-  --log_per_step 25000
+  --log_per_step 25000 \
+  --replay_buffer_size 10000
