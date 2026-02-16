@@ -9,3 +9,5 @@ bench/generated/
 bench/logs/
 third_party/
 logs/
+artifacts/
+results/
