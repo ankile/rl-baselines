@@ -17,6 +17,7 @@ SEED="${SEEDS[$SLURM_ARRAY_TASK_ID]}"
 SCALE=1.0
 
 cd third_party/ibrl
+export PATH="/iris/u/ankile/envs/ibrl/bin:$PATH"
 export MUJOCO_GL=egl
 export WANDB_DIR=.
 export WANDB__SERVICE_WAIT=120
